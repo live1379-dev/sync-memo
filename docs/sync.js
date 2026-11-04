@@ -127,7 +127,7 @@ const Sync = (() => {
   // 한 번 동기화: 1) 원격의 새 버전 받기(갈라졌으면 사본) 2) 이 기기 변경 올리기 3) 반영 끝난 옛 버전 지우기
   async function runOnce() {
     if (!navigator.onLine) { emit({ status: 'offline' }); return; }
-    if (!(await auth())) { emit({ status: 'login' }); return; }
+    if (!(await auth())) { emit({ status: (await cfg()).clientId ? 'login' : 'nosetup' }); return; }
     emit({ status: 'syncing', error: '' });
     let changed = false;
     const byKey = new Map(), garbage = new Set();
