@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>싱크 메모</title>
+<meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app" data-pane="list">
+  <!-- 사이드바: 폴더·태그 -->
+  <aside id="side">
+    <div class="side-head">
+      <h1>싱크 메모</h1>
+      <button class="icon" id="btnSettings" title="설정" aria-label="설정"><svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></button>
+    </div>
+    <nav id="views"></nav>
+    <div class="side-sec"><span>폴더</span><button class="link" id="btnAddFolder">+ 새 폴더</button></div>
+    <nav id="folders"></nav>
+    <div class="side-sec" id="tagSec"><span>태그</span></div>
+    <nav id="tags"></nav>
+    <div id="syncBox" role="button" tabindex="0"><i class="dot"></i><span id="syncText">…</span></div>
+  </aside>
+
+  <!-- 메모 목록 -->
+  <section id="list">
+    <div class="list-head">
+      <button class="icon back" id="btnToSide" aria-label="폴더"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <h2 id="listTitle">모든 메모</h2>
+      <button class="icon" id="btnLayout" title="목록/그리드" aria-label="보기 전환"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></button>
+      <button class="icon" id="btnNew" title="새 메모 (⌘N · 우클릭: 템플릿)" aria-label="새 메모"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+      <button class="icon" id="btnSort" title="정렬" aria-label="정렬"><svg viewBox="0 0 24 24"><path d="M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4"/></svg></button>
+    </div>
+    <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" type="search" placeholder="검색" autocomplete="off"></div>
+    <div id="trashBar" hidden><span>30일 지나면 완전히 삭제됩니다</span><button class="link danger" id="btnEmptyTrash">모두 삭제</button></div>
+    <div id="notes"></div>
+    <div class="list-foot"><span id="count"></span></div>
+    <button id="fab" aria-label="새 메모"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+  </section>
+
+  <!-- 편집기 -->
+  <main id="edit">
+    <div class="edit-head">
+      <button class="icon back" id="btnToList" aria-label="목록"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg><span id="backLabel">목록</span></button>
+      <span class="grow"></span>
+      <span id="editMeta"></span>
+      <button class="icon" id="btnPin" title="고정" aria-label="고정"><svg viewBox="0 0 24 24"><path d="M12 17v5M9 3h6l-1 6 4 4H6l4-4-1-6Z"/></svg></button>
+      <button class="icon" id="btnShare" title="공유" aria-label="공유"><svg viewBox="0 0 24 24"><path d="M12 3v13M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg></button>
+      <button class="icon" id="btnMore" title="더보기" aria-label="더보기"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+    </div>
+    <div id="toolbar" role="toolbar">
+      <button data-cmd="format" title="스타일 (⌘⌥1 제목 · ⌘⌥2 머리말 · ⌘⌥0 본문)"><b>Aa</b></button>
+      <button data-cmd="checklist" title="체크리스트 (⌘⇧L)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="6" rx="3"/><path d="M12 7h9M12 17h9"/><rect x="3" y="14" width="6" height="6" rx="3"/></svg></button>
+      <button data-cmd="table" title="표"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/></svg></button>
+      <button data-cmd="image" title="사진"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-8 8"/></svg></button>
+      <button data-cmd="draw" title="손글씨·그리기"><svg viewBox="0 0 24 24"><path d="M4 20c3-1 4-4 7-4s3 3 6 3 3-2 3-2M14.5 4.5l5 5L11 18l-5 1 1-5 7.5-9.5Z"/></svg></button>
+      <button data-cmd="record" title="음성 녹음"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <button data-cmd="link" title="다른 메모 연결"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></button>
+    </div>
+    <div id="lockedView" hidden>
+      <svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+      <p>잠긴 메모입니다</p>
+      <button class="primary" id="btnUnlock">암호로 열기</button>
+    </div>
+    <div id="paper"><div id="editor" contenteditable="true" spellcheck="false"></div></div>
+    <div id="empty"><p>메모를 선택하거나 새로 만드세요</p><p class="hint">⌘N 새 메모 · ⌥⌘F 검색 · ⌘⇧L 체크리스트 · ⌘⌥1/2/3/0 제목·머리말·부머리말·본문</p></div>
+  </main>
+</div>
+
+<!-- 팝업 메뉴·대화상자 공용 -->
+<div id="menu" hidden></div>
+<div id="modal" hidden><div class="sheet" id="sheet"></div></div>
+<div id="toast" hidden></div>
+<input type="file" id="fileImage" accept="image/*" hidden>
+<input type="file" id="fileImport" accept=".json,application/json" hidden>
+
+<!-- 그리기 -->
+<div id="draw" hidden>
+  <div class="draw-bar">
+    <button data-tool="pen" class="on" title="펜"><svg viewBox="0 0 24 24"><path d="M14.5 4.5l5 5L9 20H4v-5L14.5 4.5Z"/></svg></button>
+    <button data-tool="marker" title="형광펜"><svg viewBox="0 0 24 24"><path d="M9 15l-4 4h6l1.5-1.5M9 15l7-11 4 4-11 7Z"/></svg></button>
+    <button data-tool="eraser" title="지우개"><svg viewBox="0 0 24 24"><path d="M8 20h12M4.5 15.5l9-9a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L12 18H7l-2.5-2.5Z"/></svg></button>
+    <span class="sep"></span>
+    <span id="drawColors"></span>
+    <input type="range" id="drawSize" min="1" max="24" value="3" aria-label="굵기">
+    <span class="grow"></span>
+    <button id="drawUndo" title="되돌리기"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+    <button id="drawClear" class="txt">전체 지우기</button>
+    <button id="drawCancel" class="txt">취소</button>
+    <button id="drawDone" class="txt primary">완료</button>
+  </div>
+  <canvas id="canvas"></canvas>
+</div>
+
+<script src="db.js"></script>
+<script src="sync.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
