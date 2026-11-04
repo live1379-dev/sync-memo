@@ -4,7 +4,7 @@
 인터넷이 되면 **내 구글 드라이브의 앱 전용 숨김 폴더(appDataFolder)** 와 동기화된다. 서버 없음.
 
 ## 구조
-- `app/` — 정적 웹앱 전체 (GitHub Pages 등 HTTPS 정적 호스팅에 그대로 올림)
+- `docs/` — 정적 웹앱 전체 (GitHub Pages 가 이 폴더를 그대로 서비스)
   - `db.js` 기기 저장소 · `sync.js` 구글 로그인 + 드라이브 동기화 · `app.js` 화면·편집기 · `sw.js` 오프라인 실행
 - `tools/export-apple-notes.js` — 맥 메모 → 가져오기용 JSON
 - `test/e2e.mjs` — 실제 Chrome 두 대(맥·폰) + 가짜 드라이브로 동기화 검증 (`cd test && npm i && node e2e.mjs`)
@@ -28,14 +28,14 @@
 단축키(맥): ⌘N 새 메모 · ⌥⌘F 검색 · ⌘⇧L 체크리스트 · ⌘⌥1/2/3/0 제목/머리말/부머리말/본문 · Tab 들여쓰기 · ⌘⌫ 삭제
 
 ## 처음 설정 (1회)
-1. **배포**: `app/` 을 HTTPS 정적 호스팅에 올린다 (예정: `https://haolamcenterchurch.github.io/sync-memo/`).
+1. **배포**: `docs/` 를 GitHub Pages(main 브랜치 /docs)로 올린다 (예정: `https://live1379-dev.github.io/sync-memo/`).
 2. **구글 클라우드** (console.cloud.google.com)
    1. 새 프로젝트 → "API 및 서비스 → 라이브러리" 에서 **Google Drive API 사용**
    2. "Google 인증 플랫폼(OAuth 동의 화면)" → 외부 → 앱 이름·이메일 → 데이터 액세스에 `.../auth/drive.appdata` 추가
       → 대상(Audience)에서 **앱 게시(프로덕션)**. *테스트 상태로 두면 7일마다 로그인이 풀린다.*
    3. "클라이언트 → 클라이언트 만들기 → **웹 애플리케이션**"
-      - 승인된 JavaScript 원본: `https://haolamcenterchurch.github.io`
-      - 승인된 리디렉션 URI: `https://haolamcenterchurch.github.io/sync-memo/` (앱 설정 화면에 정확한 주소가 나온다)
+      - 승인된 JavaScript 원본: `https://live1379-dev.github.io`
+      - 승인된 리디렉션 URI: `https://live1379-dev.github.io/sync-memo/` (앱 설정 화면에 정확한 주소가 나온다)
    4. 클라이언트 ID·보안 비밀번호 복사
 3. **맥**: 앱 열기 → 설정(톱니) → ID·비밀번호 붙여넣기 → **구글 연결** → 허용.
    ("확인되지 않은 앱" 경고가 나오면 고급 → 이동. 내 프로젝트라 괜찮다.)

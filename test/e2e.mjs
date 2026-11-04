@@ -5,7 +5,7 @@ import { createServer } from 'http';
 import { readFile, mkdir } from 'fs/promises';
 import { extname, join } from 'path';
 
-const ROOT = new URL('../app/', import.meta.url).pathname;
+const ROOT = new URL('../docs/', import.meta.url).pathname;
 const SHOTS = new URL('./shots/', import.meta.url).pathname;
 await mkdir(SHOTS, { recursive: true });
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
