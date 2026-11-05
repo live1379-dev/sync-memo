@@ -34,6 +34,8 @@ import com.google.android.gms.auth.GoogleAuthUtil;
 import com.google.android.gms.auth.api.identity.AuthorizationRequest;
 import com.google.android.gms.auth.api.identity.AuthorizationResult;
 import com.google.android.gms.auth.api.identity.Identity;
+import com.google.android.gms.common.api.ApiException;
+import com.google.android.gms.common.api.CommonStatusCodes;
 import com.google.android.gms.common.api.Scope;
 
 import org.json.JSONObject;
@@ -201,13 +203,16 @@ public class MainActivity extends Activity {
         } else if (req == REQ_AUTH) {
             int id = authCallId;
             authCallId = -1;
-            if (code != RESULT_OK) { reject(id, "구글 연결을 취소했어요"); return; }
+            // 취소로 닫혀도 구글이 실제 이유(상태 코드)를 담아 보내는 경우가 많다 → 그대로 보여준다
             try {
                 AuthorizationResult r = Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(data);
-                gotToken(id, r.getAccessToken());
-            } catch (Exception e) {
-                reject(id, "구글 연결 실패: " + e.getMessage());
-            }
+                if (r.getAccessToken() != null) { gotToken(id, r.getAccessToken()); return; }
+            } catch (ApiException e) {
+                reject(id, explain(e));
+                return;
+            } catch (Exception ignored) { }
+            reject(id, code == RESULT_OK ? "토큰을 받지 못했어요"
+                    : "구글 연결이 끝나지 않았어요 — 직접 취소한 게 아니라면 구글 클라우드에 Android 클라이언트(패키지 net.live1379.syncmemo + SHA-1)와 Drive API 사용 설정이 되어 있는지 확인하세요");
         }
     }
 
@@ -320,7 +325,16 @@ public class MainActivity extends Activity {
                         }
                     } else gotToken(id, r.getAccessToken());
                 })
-                .addOnFailureListener(e -> reject(id, "구글 연결 실패: " + e.getMessage()));
+                .addOnFailureListener(e -> reject(id, e instanceof ApiException ? explain((ApiException) e) : "구글 연결 실패: " + e.getMessage()));
+    }
+
+    String explain(ApiException e) {
+        int c = e.getStatusCode();
+        String hint = c == CommonStatusCodes.DEVELOPER_ERROR ? " — 구글 클라우드에 Android 클라이언트가 없거나 패키지·SHA-1 이 다릅니다"
+                : c == CommonStatusCodes.CANCELED || c == 16 ? " — 취소됨"
+                : c == CommonStatusCodes.NETWORK_ERROR ? " — 인터넷 연결 확인"
+                : c == CommonStatusCodes.SIGN_IN_REQUIRED ? " — 폰에 구글 계정 로그인 필요" : "";
+        return "구글 연결 실패 (코드 " + c + " " + CommonStatusCodes.getStatusCodeString(c) + ")" + hint;
     }
 
     void gotToken(int id, String t) {
