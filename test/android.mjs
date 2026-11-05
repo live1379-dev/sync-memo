@@ -3,7 +3,9 @@ import { _android } from 'playwright-core';
 const PKG = 'net.live1379.syncmemo';
 const results = [];
 const check = (n, ok, x = '') => { results.push(ok); console.log(`${ok ? '✅' : '❌'} ${n}${x ? ' — ' + x : ''}`); };
-const [d] = await _android.devices();
+// ★ 이 테스트는 앱 데이터를 지운다(pm clear) → 에뮬레이터에서만. 실제 폰이 연결돼 있어도 절대 건드리지 않는다.
+const d = (await _android.devices()).find(x => x.serial().startsWith('emulator-'));
+if (!d) { console.error('에뮬레이터가 없습니다 — 실제 기기에서는 실행하지 않습니다 (앱 데이터를 지우는 테스트)'); process.exit(2); }
 const sh = async c => (await d.shell(c)).toString().trim();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function page() { const wv = await d.webView({ pkg: PKG }); const p = await wv.page(); await p.waitForFunction(() => typeof App !== 'undefined' && document.querySelector('#notes')); return p; }

@@ -90,6 +90,14 @@ nav a svg { width: 18px; height: 18px; color: var(--accent); }
 .grp { font-size: 12px; font-weight: 700; color: var(--ink2); padding: 12px 8px 4px; }
 .card { display: block; padding: 10px 10px 10px 12px; border-radius: 10px; cursor: pointer; position: relative; border-bottom: 1px solid var(--line); }
 .card:hover { background: var(--hover); }
+#notes .card { touch-action: pan-y; transition: transform .2s, background .15s; }
+.card.swiping { transition: none; z-index: 1; background: var(--panel); box-shadow: 0 1px 6px rgba(0,0,0,.12); }
+.card.sw-l { background: #e5484d; color: #fff; }
+.card.sw-r { background: var(--accent, #2d7ff9); color: #fff; }
+.card.sw-l *, .card.sw-r * { color: #fff !important; }
+.card.sw-l::after, .card.sw-r::after { content: attr(data-sw); position: absolute; top: 50%; transform: translateY(-50%); font-weight: 700; font-size: 13px; }
+.card.sw-l::after { right: 14px; } .card.sw-r::after { left: 14px; }
+.card.pressed { background: var(--sel); }
 .card.on { background: var(--sel); border-color: transparent; }
 .card .t { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 5px; align-items: center; }
 .card .t svg { width: 14px; height: 14px; color: var(--ink3); }
@@ -131,7 +139,7 @@ nav a svg { width: 18px; height: 18px; color: var(--accent); }
 #toolbar button:hover, #toolbar button.on { background: var(--hover); color: var(--ink); }
 #paper { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 #editor { max-width: 760px; margin: 0 auto; padding: 18px 28px 40vh; outline: none; min-height: 100%; font-size: var(--fs, 14px); line-height: 1.6; word-wrap: break-word; caret-color: var(--accent); }
-#editor:empty::before { content: "제목"; color: var(--ink3); font-size: 1.6em; font-weight: 700; }
+#editor:empty::before { content: "메모"; color: var(--ink3); }
 #editor > :first-child { margin-top: 0; }
 #editor h1 { font-size: 1.6em; line-height: 1.25; margin: .2em 0 .4em; letter-spacing: -.02em; }
 #editor h2 { font-size: 1.27em; margin: .9em 0 .3em; letter-spacing: -.01em; }
@@ -179,7 +187,10 @@ nav a svg { width: 18px; height: 18px; color: var(--accent); }
 #menu .chip { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--line); }
 #menu .chip.on { outline: 2px solid var(--accent); outline-offset: 1px; }
 #menu .seg { display: flex; gap: 4px; padding: 4px; }
-#menu .seg button { flex: 1; padding: 6px 4px; border-radius: 8px; font-size: 13px; }
+#menu .seg button { flex: 1; padding: 7px 6px; border-radius: 8px; font-size: 13px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; min-width: 36px; }
+#menu .seg button svg { width: 19px; height: 19px; }
+#menu.fmt { min-width: 360px; }
+#menu.fmt .seg + .seg { border-top: 1px solid var(--line); }
 #menu .seg button:hover { background: var(--hover); }
 #menu .cap { font-size: 11px; color: var(--ink3); padding: 6px 10px 2px; font-weight: 600; }
 #modal { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; padding: 16px; }
@@ -257,3 +268,16 @@ nav a svg { width: 18px; height: 18px; color: var(--accent); }
 #app.single { grid-template-columns: 1fr !important; }
 #app.single #side, #app.single #list, #app.single .edit-head .back { display: none !important; }
 .native-mac #app.single .edit-head { padding-top: 34px; }
+
+/* 고른 글자 크기 (⌘+ / ⌘-) */
+#editor .fz-1 { font-size: .75em; } #editor .fz-2 { font-size: .875em; } #editor .fz-4 { font-size: 1.15em; }
+#editor .fz-5 { font-size: 1.35em; } #editor .fz-6 { font-size: 1.6em; } #editor .fz-7 { font-size: 2em; }
+/* 폴더·보기 칩 줄 — 폴더 칸이 안 보일 때(폰 세로·접은 화면) 목록 위에 */
+#chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px 12px 8px; scrollbar-width: none; -webkit-user-select: none; user-select: none; }
+#chips::-webkit-scrollbar { display: none; }
+.chip-v { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; background: var(--hover); color: var(--ink2); font-size: 13px; white-space: nowrap; }
+.chip-v.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.chip-v i { width: 8px; height: 8px; border-radius: 50%; }
+.chip-v.add { background: none; border: 1px dashed var(--line); }
+@media (min-width: 761px) { #app:not(.side-hidden) #chips { display: none; } }
+@media (max-width: 760px) { #menu.fmt { min-width: 0; } }

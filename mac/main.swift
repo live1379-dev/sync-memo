@@ -287,6 +287,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             it.submenu = m
             main.addItem(it)
         }
+        func fmtItem(_ t: String, _ cmd: String, _ k: String, _ mods: NSEvent.ModifierFlags = .command) -> NSMenuItem {
+            let i = NSMenuItem(title: t, action: #selector(fmtAction(_:)), keyEquivalent: k)
+            i.keyEquivalentModifierMask = mods
+            i.representedObject = cmd
+            return i
+        }
         func item(_ t: String, _ a: Selector?, _ k: String = "", _ mods: NSEvent.ModifierFlags = .command) -> NSMenuItem {
             let i = NSMenuItem(title: t, action: a, keyEquivalent: k)
             i.keyEquivalentModifierMask = mods
@@ -315,14 +321,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             item("전체 선택", #selector(NSText.selectAll(_:)), "a"),
         ])
         menu("서식", [
-            item("굵게", #selector(bold), "b"),
-            item("기울임꼴", #selector(italic), "i"),
-            item("밑줄", #selector(underline), "u"), .separator(),
-            item("제목", #selector(h1), "1", [.command, .option]),
-            item("머리말", #selector(h2), "2", [.command, .option]),
-            item("부머리말", #selector(h3), "3", [.command, .option]),
-            item("본문", #selector(body), "0", [.command, .option]),
-            item("체크리스트", #selector(checklist), "l", [.command, .shift]),
+            fmtItem("제목", "h1", "t", [.command, .shift]),
+            fmtItem("머리말", "h2", "h", [.command, .shift]),
+            fmtItem("부머리말", "h3", "j", [.command, .shift]),
+            fmtItem("본문", "p", "b", [.command, .shift]),
+            fmtItem("고정폭", "pre", "m", [.command, .shift]), .separator(),
+            fmtItem("글머리 기호 목록", "ul", "7", [.command, .shift]),
+            fmtItem("번호 목록", "ol", "9", [.command, .shift]),
+            fmtItem("체크리스트", "check", "l", [.command, .shift]),
+            fmtItem("체크 표시", "checkmark", "u", [.command, .shift]), .separator(),
+            fmtItem("굵게", "bold", "b"),
+            fmtItem("기울임꼴", "italic", "i"),
+            fmtItem("밑줄", "underline", "u"),
+            fmtItem("취소선", "strike", "x", [.command, .shift]), .separator(),
+            fmtItem("글자 크게", "bigger", "+"),
+            fmtItem("글자 작게", "smaller", "-"),
+            fmtItem("들여쓰기", "indent", "]"),
+            fmtItem("내어쓰기", "outdent", "["),
         ])
         menu("보기", [item("폴더 칸 보기/숨기기", #selector(toggleSide), "s", [.command, .option]), .separator(), item("전체 화면", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])])
         menu("윈도우", [
@@ -333,18 +348,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         NSApp.mainMenu = main
     }
     @objc func settings() { jsMain("App.openSettings()") }
+    @objc func fmtAction(_ sender: NSMenuItem) { if let c = sender.representedObject as? String { js("App.fmt('\(c)')") } }
     @objc func toggleSide() { jsMain("App.toggleSide()") }
     @objc func newNote() { jsMain("App.newNote()") }
     @objc func search() { jsMain("App.focusSearch()") }
     @objc func printNote() { doPrint() }
-    @objc func bold() { js("document.execCommand('bold')") }
-    @objc func italic() { js("document.execCommand('italic')") }
-    @objc func underline() { js("document.execCommand('underline')") }
-    @objc func h1() { js("document.execCommand('formatBlock',false,'<h1>')") }
-    @objc func h2() { js("document.execCommand('formatBlock',false,'<h2>')") }
-    @objc func h3() { js("document.execCommand('formatBlock',false,'<h3>')") }
-    @objc func body() { js("document.execCommand('formatBlock',false,'<p>')") }
-    @objc func checklist() { js("document.querySelector('[data-cmd=checklist]')?.click()") }
 
     func doPrint(_ target: WKWebView? = nil) {
         let t = target ?? activeWeb

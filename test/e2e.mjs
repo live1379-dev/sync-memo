@@ -96,6 +96,13 @@ try {
   st = await sync(B.p);
   check('폰: 맥에서 쓴 메모가 보임', (await B.p.textContent('#notes')).includes('장보기 목록'));
 
+  // 2-1. 폰 세로: 목록 위에 폴더·보기 칩 줄
+  const chipsB = await B.p.evaluate(() => ({ shown: getComputedStyle(document.getElementById('chips')).display !== 'none', chips: [...document.querySelectorAll('#chips .chip-v')].map(b => b.textContent) }));
+  check('폰 세로: 메모 목록 위에 폴더·보기 칩 표시', chipsB.shown && chipsB.chips.includes('모든 메모') && chipsB.chips.includes('최근 삭제됨'), JSON.stringify(chipsB));
+  await B.p.tap('#chips [data-type="trash"]');
+  check('칩 누르면 그 보기로 전환', (await B.p.textContent('#listTitle')) === '최근 삭제됨');
+  await B.p.tap('#chips [data-type="all"]');
+
   // 3. 폰에서 수정 → 맥 반영
   await B.p.tap('.card');
   check('폰: 편집 화면으로 전환', await B.p.evaluate(() => document.getElementById('app').dataset.pane === 'edit'));
@@ -224,6 +231,27 @@ try {
   const lk = await A.p.evaluate(() => ({ links: [...document.querySelectorAll('#editor a[href]')].map(a => a.getAttribute('href')), last: document.querySelector('#editor').lastElementChild.textContent }));
   check('링크 자동 인식 (스페이스·엔터로 끝내면 하이퍼링크)', JSON.stringify(lk.links) === JSON.stringify(['https://example.com/a?b=1', 'https://youtu.be/xyz']) && lk.last === '끝', JSON.stringify(lk));
 
+  // 11-0b. 새 메모는 본문으로 시작 + 애플 메모 단축키 + 글자 크게
+  await A.p.click('#btnNew');
+  check('새 메모 첫 줄은 본문 크기 (제목 서식 없음)', await A.p.evaluate(() => document.querySelector('#editor').firstElementChild.tagName) === 'P');
+  await A.p.keyboard.type('단축키 제목'); await A.p.keyboard.press('Control+Shift+KeyT');
+  await A.p.keyboard.press('Enter'); await A.p.keyboard.press('Control+Shift+KeyB'); await A.p.keyboard.type('본문 줄');
+  await A.p.keyboard.press('Enter'); await A.p.keyboard.press('Control+Shift+KeyL'); await A.p.keyboard.type('할 일 하나');
+  await A.p.keyboard.press('Control+Shift+KeyU');
+  await A.p.keyboard.press('Enter'); await A.p.keyboard.type('하위 항목'); await A.p.keyboard.press('Control+BracketRight');
+  const sc = await A.p.evaluate(() => { const e = document.getElementById('editor'); return { h1: e.querySelector('h1')?.textContent, p: e.querySelector('p')?.textContent, checked: e.querySelector('ul.checklist > li')?.dataset.checked, nested: !!e.querySelector('ul.checklist ul li, ul.checklist li ul, ul ul') }; });
+  check('단축키: ⌘⇧T 제목 · ⌘⇧B 본문 · ⌘⇧L 체크리스트 · ⌘⇧U 체크 · ⌘] 들여쓰기', sc.h1 === '단축키 제목' && sc.p === '본문 줄' && sc.checked === 'true' && sc.nested, JSON.stringify(sc));
+  await A.p.evaluate(() => { const p = document.querySelector('#editor p'); const r = document.createRange(); r.selectNodeContents(p); getSelection().removeAllRanges(); getSelection().addRange(r); });
+  await A.p.keyboard.press('Control+Equal'); await A.p.keyboard.press('Control+Equal');
+  const fz = await A.p.evaluate(() => { const s = document.querySelector('#editor p [class*="fz-"]'); return s ? { cls: s.className, size: getComputedStyle(s).fontSize } : null; });
+  check('고른 글자 ⌘+ 두 번 → 2단계 크게 (fz-5)', fz && /fz-5/.test(fz.cls) && parseFloat(fz.size) > 17, JSON.stringify(fz));
+  await A.p.keyboard.press('Control+Minus');
+  check('⌘- 로 한 단계 작게 (fz-4)', await A.p.evaluate(() => !!document.querySelector('#editor p .fz-4')));
+  await A.p.click('[data-cmd="format"]');
+  const fm = await A.p.evaluate(() => { const m = document.getElementById('menu'); const btns = [...m.querySelectorAll('.seg button')]; return { w: m.offsetWidth, wrapped: btns.filter(b => b.offsetHeight > 40).length, n: btns.length }; });
+  check('서식 메뉴: 버튼 글자가 줄바꿈되지 않음', fm.wrapped === 0 && fm.n >= 17, JSON.stringify(fm));
+  await A.p.keyboard.press('Escape');
+
   // 11-1. 긴 글 붙여넣기: 서식 버리고 줄 단위, 화면 안 밀림
   await A.p.click('#btnNew');
   const long = Array.from({ length: 60 }, (_, i) => i % 2 ? `- ${i}번째 줄 설명` : `https://www.youtube.com/watch?v=abc${i}`).join('\n');
@@ -237,7 +265,7 @@ try {
       scroll: document.scrollingElement.scrollTop + document.getElementById('app').scrollTop, headVisible: document.querySelector('.list-head').getBoundingClientRect().top >= 0,
       editH: document.getElementById('edit').getBoundingClientRect().height, vh: innerHeight };
   });
-  check('붙여넣기: 서식 없이 줄 단위 (제목 1줄 + 본문, 링크 유지)', pv.h1 === 1 && pv.bold === 0 && pv.p >= 59 && pv.links === 30, JSON.stringify(pv));
+  check('붙여넣기: 서식 없이 줄 단위 (전부 본문, 링크 유지)', pv.h1 === 0 && pv.bold === 0 && pv.p >= 60 && pv.links === 30, JSON.stringify(pv));
   check('긴 글 붙여넣어도 화면이 밀리지 않음', pv.scroll === 0 && pv.headVisible && pv.editH <= pv.vh, JSON.stringify(pv));
   await A.p.screenshot({ path: SHOTS + 'paste-long.png' });
 
@@ -286,6 +314,37 @@ try {
   check('오프라인 상태에서 앱 열림 + 메모 유지', (await dp.textContent('#notes')).includes('오프라인 메모'));
   check('오프라인 표시', (await dp.textContent('#syncText')).length > 0, await dp.textContent('#syncText'));
   await D.close();
+
+  // 16. 터치 제스처: 길게 누르기 메뉴 · 스와이프 고정/삭제
+  const G = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const gp = await G.newPage();
+  gp.on('pageerror', e => errors.push('G: ' + e.message));
+  await gp.goto(BASE);
+  for (const t of ['제스처A', '제스처B']) { await gp.click('#fab'); await gp.keyboard.type(t); await gp.evaluate(() => App._test.saveNow()); await gp.goBack(); await gp.waitForTimeout(200); }
+  const touch = (title, steps, hold = 0) => gp.evaluate(async ([title, steps, hold]) => {
+    const c = [...document.querySelectorAll('#notes .card')].find(x => x.textContent.includes(title));
+    const r = c.getBoundingClientRect(), x = r.left + 60, y = r.top + r.height / 2;
+    const ev = (type, dx, t) => (t || window).dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 7, pointerType: 'touch', clientX: x + dx, clientY: y }));
+    ev('pointerdown', 0, c);
+    if (hold) await new Promise(r => setTimeout(r, hold));
+    for (const dx of steps) { ev('pointermove', dx); await new Promise(r => setTimeout(r, 16)); }
+    ev('pointerup', steps.at(-1) || 0);
+    c.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 400));
+  }, [title, steps, hold]);
+  await touch('제스처A', [], 650);
+  const menu = await gp.evaluate(() => { const m = document.querySelector('#menu'); return m && !m.hidden ? m.textContent : ''; });
+  check('길게 누르기 → 메뉴(고정·이동·복제·색상·삭제)', ['고정', '폴더로 이동', '복제', '메모 색상', '삭제'].every(w => menu.includes(w)), menu.slice(0, 60));
+  check('길게 누르기 후 메모가 열리지 않음', await gp.evaluate(() => document.querySelector('#app').dataset.pane !== 'edit'));
+  await gp.keyboard.press('Escape'); await gp.mouse.click(380, 830).catch(() => {}); await gp.evaluate(() => { const m = document.querySelector('#menu'); if (m) m.hidden = true; });
+  const pinOf = t => gp.evaluate(t => [...App._test.recs().values()].find(n => n.kind === 'note' && (n.title || '').includes(t))?.pinned, t);
+  await touch('제스처A', [20, 60, 120, 160]);
+  check('오른쪽 스와이프 → 고정', await pinOf('제스처A') === true);
+  await touch('제스처A', [20, 50]);
+  check('짧게 밀면 아무 일 없음(열리지도 않음)', await pinOf('제스처A') === true && await gp.evaluate(() => document.querySelector('#app').dataset.pane !== 'edit'));
+  await touch('제스처B', [-20, -60, -120, -160]);
+  check('왼쪽 스와이프 → 최근 삭제됨', await gp.evaluate(() => !!([...App._test.recs().values()].find(n => n.kind === 'note' && (n.title || '').includes('제스처B'))?.trashedAt)));
+  await G.close();
 } catch (e) {
   check('테스트 실행', false, e.stack);
 } finally {
