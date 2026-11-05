@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.3.3';
+  const VERSION = '1.3.4';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1425,8 +1425,13 @@ const App = (() => {
       ({
         format: () => formatMenu(b), checklist: toggleChecklist, table: () => insertTable(),
         image: () => $('#fileImage').click(), draw: () => Draw.open(), record: recordDialog, link: linkDialog,
+        undo: () => undoRedo('undo'), redo: () => undoRedo('redo'),
       })[b.dataset.cmd]?.();
     };
+    // 되돌리기·다시 실행 — 폰엔 ⌘Z 가 없어서 도구 막대에 둔다
+    const undoRedo = k => { if (document.activeElement !== editor) editor.focus(); document.execCommand(k); updUndo(); };
+    const updUndo = () => { for (const k of ['undo', 'redo']) { let ok = false; try { ok = document.queryCommandEnabled(k); } catch {} $(k === 'undo' ? '#btnUndo' : '#btnRedo').classList.toggle('dim', !ok); } };
+    editor.addEventListener('input', updUndo); editor.addEventListener('focus', updUndo); updUndo();
     $('#fileImage').onchange = e => { insertImages([...e.target.files]); e.target.value = ''; };
     $('#fileImport').onchange = async e => {
       const f = e.target.files[0]; e.target.value = ''; if (!f) return;

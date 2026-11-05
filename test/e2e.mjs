@@ -345,6 +345,26 @@ try {
   await touch('제스처B', [-20, -60, -120, -160]);
   check('왼쪽 스와이프 → 최근 삭제됨', await gp.evaluate(() => !!([...App._test.recs().values()].find(n => n.kind === 'note' && (n.title || '').includes('제스처B'))?.trashedAt)));
   await G.close();
+
+  // 17. 되돌리기·다시 실행 버튼
+  const U = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const up = await U.newPage();
+  up.on('pageerror', e => errors.push('U: ' + e.message));
+  await up.goto(BASE);
+  await up.click('#fab'); await up.keyboard.type('되돌리기A'); await up.keyboard.press('Enter'); await up.keyboard.type('지울글');
+  const ed = () => up.evaluate(() => document.querySelector('#editor').innerText);
+  await up.tap('#btnUndo');
+  const u1 = await ed();
+  check('되돌리기 버튼 → 방금 친 글 취소', !u1.includes('지울글') && u1.includes('되돌리기A'), JSON.stringify(u1));
+  await up.tap('#btnRedo');
+  check('다시 실행 버튼 → 복구', (await ed()).includes('지울글'));
+  await up.evaluate(() => App._test.saveNow()); await up.goBack(); await up.waitForTimeout(200);
+  await up.click('#fab'); await up.keyboard.type('되돌리기B'); await up.evaluate(() => App._test.saveNow());
+  for (let i = 0; i < 5; i++) await up.tap('#btnUndo');
+  await up.evaluate(() => App._test.saveNow());
+  const a = await up.evaluate(() => [...App._test.recs().values()].find(n => n.kind === 'note' && (n.title || '').includes('되돌리기A'))?.html || '');
+  check('다른 메모의 되돌리기가 앞 메모를 건드리지 않음', a.includes('지울글'));
+  await U.close();
 } catch (e) {
   check('테스트 실행', false, e.stack);
 } finally {
