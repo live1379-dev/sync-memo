@@ -158,6 +158,20 @@ try {
   check('표 3×3 삽입', (await A.p.$$('#editor table td')).length === 9);
   await save(A.p);
 
+  // 8-1. 레이아웃: 폴더 칸 기본 숨김 → 버튼으로 열기, 기본 글씨 15px
+  const lay0 = await A.p.evaluate(() => ({ hidden: document.getElementById('app').classList.contains('side-hidden'), sideW: Math.round(document.getElementById('side').getBoundingClientRect().width), fs: getComputedStyle(document.getElementById('editor')).fontSize }));
+  check('폴더 칸 기본 숨김 + 기본 글씨 14px', lay0.hidden && lay0.sideW === 0 && lay0.fs === '14px', JSON.stringify(lay0));
+  await A.p.click('#btnSideToggle'); await A.p.waitForTimeout(350);
+  check('폴더 칸 버튼으로 열림', await A.p.evaluate(() => document.getElementById('side').getBoundingClientRect().width) > 150);
+  // 8-2. 폴드 접기(커버 화면 폭) — 보던 메모가 이어짐, 다시 펼치면 3칸
+  const openId = await A.p.evaluate(() => document.querySelector('.card.on')?.dataset.id);
+  await A.p.setViewportSize({ width: 380, height: 800 }); await A.p.waitForTimeout(300);
+  const folded = await A.p.evaluate(() => ({ pane: document.getElementById('app').dataset.pane, edVisible: document.getElementById('editor').getBoundingClientRect().width > 300, listVisible: getComputedStyle(document.getElementById('list')).display !== 'none' }));
+  check('접으면(폭 380) 보던 메모가 한 칸으로 이어짐', folded.pane === 'edit' && folded.edVisible && !folded.listVisible, JSON.stringify(folded));
+  await A.p.setViewportSize({ width: 1280, height: 800 }); await A.p.waitForTimeout(400);
+  const unfolded = await A.p.evaluate(() => ({ list: document.getElementById('list').getBoundingClientRect().width, edit: document.getElementById('edit').getBoundingClientRect().width, on: document.querySelector('.card.on')?.dataset.id }));
+  check('펼치면 목록+편집 함께, 같은 메모 선택', unfolded.list > 200 && unfolded.edit > 500 && unfolded.on === openId, JSON.stringify(unfolded));
+
   // 9. 폴더
   await A.p.click('#btnAddFolder');
   await A.p.fill('.sheet input', '교회');
@@ -198,6 +212,17 @@ try {
 
   const names = [...drive.files.values()].map(f => f.name);
   check('드라이브: 레코드당 버전 파일 1개로 정리됨', new Set(names).size === names.length, `${names.length}개`);
+
+  // 11-0. 링크 자동 인식: 주소 + 스페이스 / 주소 + 엔터
+  await A.p.click('#btnNew');
+  await A.p.keyboard.type('링크 테스트'); await A.p.keyboard.press('Enter');
+  await A.p.keyboard.type('여기 https://example.com/a?b=1 봐요');
+  await A.p.keyboard.press('Enter');
+  await A.p.keyboard.type('https://youtu.be/xyz');
+  await A.p.keyboard.press('Enter');
+  await A.p.keyboard.type('끝');
+  const lk = await A.p.evaluate(() => ({ links: [...document.querySelectorAll('#editor a[href]')].map(a => a.getAttribute('href')), last: document.querySelector('#editor').lastElementChild.textContent }));
+  check('링크 자동 인식 (스페이스·엔터로 끝내면 하이퍼링크)', JSON.stringify(lk.links) === JSON.stringify(['https://example.com/a?b=1', 'https://youtu.be/xyz']) && lk.last === '끝', JSON.stringify(lk));
 
   // 11-1. 긴 글 붙여넣기: 서식 버리고 줄 단위, 화면 안 밀림
   await A.p.click('#btnNew');

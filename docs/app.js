@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.1.2';
+  const VERSION = '1.2.0';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -26,7 +26,8 @@ const App = (() => {
   let view = { type: 'all' };
   let curId = null, loadedVer = 0, pendingSave = false, saveTimer = null, deferReload = false;
   let q = '';
-  let prefs = { layout: 'list', sort: 'updated', checkedToBottom: true, theme: 'auto' };
+  let prefs = { layout: 'list', sort: 'updated', checkedToBottom: true, theme: 'auto', sideHidden: true, fontSize: 'm' };
+  const FS = { s: '13px', m: '14px', l: '16px' }, FSN = { s: '작게', m: '보통', l: '크게' };
   let lockPw = null, lockTimer = null;
   const unlocked = new Map(); // 잠금 풀린 메모의 평문 (메모리에만)
   const keyCache = new Map();
@@ -55,8 +56,16 @@ const App = (() => {
     rec._dirty = true;
     recs.set(rec.key, rec);
     await DB.put(rec);
-    Sync.soon();
+    if (SINGLE) bc?.postMessage({ t: 'sync' }); else Sync.soon();
+    bc?.postMessage({ t: 'changed', key: rec.key });
   }
+  // 메모 창이 여러 개일 때(맥 더블클릭 새 창) 서로 변경을 알린다. 동기화는 본 창만.
+  const SINGLE = new URLSearchParams(location.search).get('single') === '1';
+  const bc = 'BroadcastChannel' in window ? new BroadcastChannel('sync-memo') : null;
+  if (bc) bc.onmessage = e => {
+    if (e.data?.t === 'sync' && !SINGLE) Sync.soon(1500);
+    if (e.data?.t === 'changed') onRemoteChange(true);
+  };
   async function reload() { recs = new Map((await DB.all()).map(r => [r.key, r])); }
 
   function textOf(html) {
@@ -311,6 +320,8 @@ const App = (() => {
     }
     editor.innerHTML = sanitize(n.locked ? unlocked.get(n.id) : n.html);
     editor.contentEditable = trashed ? 'false' : 'true';
+    linkifyIn(editor); // 예전 메모의 주소 글자도 링크로 (저장은 다음 편집 때)
+    if (SINGLE && Native.platform === 'mac') Native.call('setTitle', { title: n.title || '메모' }).catch(() => {});
     loadedVer = n.updatedAt;
     deferReload = false;
   }
@@ -389,6 +400,57 @@ const App = (() => {
     }
   }
   function exec(cmd, val) { restoreSel(); document.execCommand(cmd, false, val); afterEdit(); }
+  // ───────── 링크 자동 인식 ─────────
+  const URL_RE = /https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)\]}>]/g;
+  function caretOffset(block) {
+    const sel = getSelection();
+    if (!sel.rangeCount || !block.contains(sel.anchorNode)) return -1;
+    const r = document.createRange(); r.selectNodeContents(block); r.setEnd(sel.anchorNode, sel.anchorOffset);
+    return r.toString().length;
+  }
+  function setCaretOffset(block, off) {
+    const w = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    let n, left = off;
+    while ((n = w.nextNode())) {
+      if (left <= n.data.length) { const r = document.createRange(); r.setStart(n, left); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return; }
+      left -= n.data.length;
+    }
+  }
+  // root 안의 링크 아닌 주소 글자를 <a> 로 바꾼다. 커서가 그 안에 있으면 위치 유지.
+  function linkifyIn(root) {
+    if (!root) return false;
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement.closest('a,pre,code') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    const hits = [];
+    while (w.nextNode()) { URL_RE.lastIndex = 0; if (URL_RE.test(w.currentNode.data)) hits.push(w.currentNode); }
+    if (!hits.length) return false;
+    const block = root === editor ? null : root, off = block ? caretOffset(block) : -1;
+    for (const node of hits) {
+      const frag = document.createDocumentFragment(), t = node.data;
+      let last = 0, m;
+      URL_RE.lastIndex = 0;
+      while ((m = URL_RE.exec(t))) {
+        if (m.index > last) frag.append(t.slice(last, m.index));
+        const a = document.createElement('a'); a.href = m[0]; a.textContent = m[0]; frag.append(a);
+        last = m.index + m[0].length;
+      }
+      if (last < t.length) frag.append(t.slice(last));
+      node.replaceWith(frag);
+    }
+    if (off >= 0) setCaretOffset(block, off);
+    return true;
+  }
+  const blockOf = () => caretEl('p,h1,h2,h3,li,blockquote,td,th,div:not(.att)');
+  // 스페이스·엔터로 주소를 끝냈을 때 그 줄(과 엔터면 윗줄)을 링크로
+  function autoLink(e) {
+    const space = e.inputType === 'insertText' && /\s/.test(e.data || ''), enter = e.inputType === 'insertParagraph';
+    if (!space && !enter) return;
+    const b = blockOf();
+    let changed = false;
+    if (enter && b) changed = linkifyIn(b.previousElementSibling) || changed;
+    if (space && b) changed = linkifyIn(b) || changed;
+    if (changed) scheduleSave();
+  }
+
   // 여러 줄 글을 문단으로 넣는다. 첫 줄은 지금 커서 자리(새 메모면 제목), 둘째 줄부터는 본문 크기. 주소만 있는 줄은 링크.
   function pastePlain(text) {
     restoreSel();
@@ -403,6 +465,8 @@ const App = (() => {
       if (/^https?:\/\/\S+$/.test(t)) document.execCommand('insertHTML', false, `<a href="${esc(t)}">${esc(t)}</a>`);
       else if (line) document.execCommand('insertText', false, line);
     });
+    [...editor.children].forEach(b => b.contains(getSelection().anchorNode) || linkifyIn(b));
+    linkifyIn(blockOf());
     afterEdit();
     const r = getSelection().rangeCount && getSelection().getRangeAt(0).getBoundingClientRect();
     if (r && r.bottom > $('#paper').getBoundingClientRect().bottom) caretEl('p,h1,h2,h3,li,div,pre')?.scrollIntoView({ block: 'nearest' });
@@ -1026,6 +1090,8 @@ const App = (() => {
     return added;
   }
 
+  const openExt = url => (Native.available ? Native.call('openExternal', { url }) : open(url, '_blank', 'noopener'));
+
   // ───────── 공유 ─────────
   async function share() {
     const n = cur(); if (!n) return;
@@ -1056,8 +1122,10 @@ const App = (() => {
         ${c.clientId && !Native.available ? '<button data-link>다른 기기 연결 링크 복사</button>' : ''}
       </div>
       <label style="margin-top:20px">사용</label>
+      <div class="opt"><span>글자 크기</span><button data-fs>${FSN[prefs.fontSize] || '보통'}</button></div>
       <div class="opt"><span>체크한 항목을 맨 아래로</span><button data-chk>${prefs.checkedToBottom ? '켜짐' : '꺼짐'}</button></div>
       <div class="opt"><span>화면 모드</span><button data-theme>${{ auto: '자동', light: '라이트', dark: '다크' }[prefs.theme]}</button></div>
+      ${Native.platform === 'android' ? '<div class="opt"><span>알림창(빠른 설정)에 \'새 메모\' 버튼</span><button data-tile>추가</button></div>' : ''}
       <label style="margin-top:20px">백업</label>
       <div class="opt"><span>모든 메모를 파일로 저장</span><button data-exp>내보내기</button></div>
       <div class="opt"><span>백업·맥 메모 가져오기 (.json)</span><button data-imp>가져오기</button></div>
@@ -1074,6 +1142,8 @@ const App = (() => {
         const url = redirect + '#setup=' + btoa(unescape(encodeURIComponent(JSON.stringify(n))));
         try { await navigator.clipboard.writeText(url); toast('링크를 복사했어요 — 폰에서 열면 설정이 들어갑니다'); } catch { prompt('이 링크를 폰에서 여세요', url); }
       });
+      s.querySelector('[data-tile]')?.addEventListener('click', () => Native.call('addTile').then(r => toast(r?.msg || '추가했어요')).catch(e => toast(e.message)));
+      s.querySelector('[data-fs]').onclick = e => { prefs.fontSize = { s: 'm', m: 'l', l: 's' }[prefs.fontSize] || 'm'; savePrefs(); applyLayout(); e.target.textContent = FSN[prefs.fontSize]; };
       s.querySelector('[data-chk]').onclick = e => { prefs.checkedToBottom = !prefs.checkedToBottom; savePrefs(); e.target.textContent = prefs.checkedToBottom ? '켜짐' : '꺼짐'; };
       s.querySelector('[data-theme]').onclick = e => { prefs.theme = { auto: 'light', light: 'dark', dark: 'auto' }[prefs.theme]; savePrefs(); applyTheme(); e.target.textContent = { auto: '자동', light: '라이트', dark: '다크' }[prefs.theme]; };
       s.querySelector('[data-exp]').onclick = exportBackup;
@@ -1090,6 +1160,18 @@ const App = (() => {
     if (prefs.theme === 'auto' && sysDark === null) root.removeAttribute('data-theme');
     else root.dataset.theme = dark ? 'dark' : 'light';
     if (Native.platform === 'android') Native.call('bars', { dark }).catch(() => {});
+  }
+  function applyLayout() {
+    app.classList.toggle('side-hidden', !!prefs.sideHidden);
+    document.documentElement.style.setProperty('--fs', FS[prefs.fontSize] || FS.m);
+  }
+  function toggleSide() { prefs.sideHidden = !prefs.sideHidden; savePrefs(); applyLayout(); }
+  // 화면 폭이 바뀔 때 (폴드 접기·펼치기, 회전, 창 크기) 보던 메모를 이어서 보여준다
+  function onWidthChange() {
+    if (isMobile()) {
+      if (curId && app.dataset.pane !== 'edit') { history.pushState({ pane: 'edit' }, ''); app.dataset.pane = 'edit'; }
+      else if (!curId) app.dataset.pane = 'list';
+    } else if (!curId) { const first = filtered()[0]; if (first) openNote(first.id); }
   }
   function setSysDark(v) { sysDark = !!v; applyTheme(); }
 
@@ -1114,6 +1196,8 @@ const App = (() => {
     $('#btnAddFolder').onclick = () => folderDialog();
     $('#listTitle').onclick = e => { if (view.type === 'folder') folderMenu(e.target, recs.get('folder-' + view.id)); };
     $('#btnSettings').onclick = settings;
+    $('#btnSideToggle').onclick = toggleSide;
+    matchMedia('(max-width: 760px)').addEventListener('change', onWidthChange);
     $('#syncBox').onclick = () => { const s = Sync.state.status; s === 'synced' || s === 'syncing' ? Sync.run() : settings(); };
     $('#btnLayout').onclick = () => { prefs.layout = prefs.layout === 'grid' ? 'list' : 'grid'; savePrefs(); renderList(); };
     $('#btnSort').onclick = e => openMenu(e.currentTarget, [
@@ -1132,6 +1216,10 @@ const App = (() => {
     fab.oncontextmenu = e => { e.preventDefault(); templateMenu(fab); };
     $('#q').oninput = e => { q = e.target.value.trim(); renderList(); };
     $('#notes').onclick = e => { const c = e.target.closest('.card'); if (c) openNote(c.dataset.id); };
+    $('#notes').ondblclick = e => {
+      const c = e.target.closest('.card');
+      if (c && Native.platform === 'mac') { saveNow(); Native.call('openWindow', { id: c.dataset.id, title: recs.get('note-' + c.dataset.id)?.title || '메모' }).catch(() => {}); }
+    };
     $('#notes').oncontextmenu = e => {
       const c = e.target.closest('.card'); if (!c) return; e.preventDefault();
       const n = recs.get('note-' + c.dataset.id);
@@ -1183,7 +1271,7 @@ const App = (() => {
       try { const n = await importData(JSON.parse(await f.text())); toast(`메모 ${n}개를 가져왔어요`); } catch (err) { toast('가져오기 실패: ' + err.message); }
     };
 
-    editor.addEventListener('input', e => { normalizeChecklists(e.inputType === 'insertParagraph'); scheduleSave(); touchLock(); });
+    editor.addEventListener('input', e => { normalizeChecklists(e.inputType === 'insertParagraph'); autoLink(e); scheduleSave(); touchLock(); });
     editor.addEventListener('blur', () => { saveNow(); if (deferReload) setTimeout(() => { if (document.activeElement !== editor) renderEditor(); }, 0); });
     editor.addEventListener('click', e => {
       const li = e.target.closest('ul.checklist > li');
@@ -1192,7 +1280,7 @@ const App = (() => {
       if (a) {
         e.preventDefault();
         if (a.dataset.note) { const n = recs.get('note-' + a.dataset.note); n && !n.purged ? openNote(n.id) : toast('연결된 메모가 없어요'); }
-        else if (a.href) openMenu(a, [{ label: '링크 열기', act: () => (Native.available ? Native.call('openExternal', { url: a.href }) : open(a.href, '_blank', 'noopener')) }, { label: '링크 지우기', act: () => { a.replaceWith(...a.childNodes); scheduleSave(); } }]);
+        else if (a.href) openExt(a.href); // 클릭 한 번에 바로 열기 (고치기는 오른쪽 클릭·길게 누르기)
         return;
       }
       const img = e.target.closest('img');
@@ -1203,6 +1291,16 @@ const App = (() => {
           { label: '삭제', danger: true, act: () => { img.remove(); scheduleSave(); } },
         ]);
       }
+    });
+    editor.addEventListener('contextmenu', e => {
+      const a = e.target.closest('a[href]:not([data-note])');
+      if (!a) return;
+      e.preventDefault();
+      openMenu({ x: e.clientX, y: e.clientY }, [
+        { label: '링크 열기', act: () => openExt(a.href) },
+        { label: '링크 복사', act: () => navigator.clipboard.writeText(a.href).then(() => toast('복사했어요')) },
+        { label: '링크 지우기 (글자만 남기기)', act: () => { a.replaceWith(...a.childNodes); scheduleSave(); } },
+      ]);
     });
     editor.addEventListener('keydown', e => {
       const m = e.metaKey || e.ctrlKey;
@@ -1263,7 +1361,8 @@ const App = (() => {
   const templateMenu = anchor => openMenu(anchor, [{ cap: '템플릿으로 새 메모' }, ...TEMPLATES.map(t => ({ label: t.name, act: () => newNote(t.html()) }))]);
 
   // 원격 변경 반영
-  async function onRemoteChange() {
+  async function onRemoteChange(fromOtherWindow) {
+    if (!fromOtherWindow) bc?.postMessage({ t: 'changed' }); // 드라이브에서 받은 변경 → 메모 창들에도
     await reload();
     renderSide(); renderList();
     const n = cur();
@@ -1307,9 +1406,12 @@ const App = (() => {
   }
 
   async function init() {
+    if (Native.platform === 'mac') prefs.sideHidden = false; // 맥은 폴더 칸 기본 표시 (오너 2026-11-05)
     try { Object.assign(prefs, JSON.parse(localStorage.getItem('sm_prefs') || '{}')); } catch {}
+    try { if (Native.platform === 'mac' && !localStorage.getItem('sm_mac_side_v1')) { prefs.sideHidden = false; localStorage.setItem('sm_mac_side_v1', '1'); savePrefs(); } } catch {}
+    if (SINGLE) app.classList.add('single');
     if (Native.platform === 'android') { try { sysDark = !!(await Native.call('sysDark')); } catch {} }
-    applyTheme();
+    applyTheme(); applyLayout();
     document.execCommand('defaultParagraphSeparator', false, 'p');
     history.replaceState({ pane: 'list' }, '');
     app.dataset.pane = 'list';
@@ -1317,6 +1419,7 @@ const App = (() => {
     await purgeOld();
     bind();
     renderSide(); renderList(); renderEditor();
+    if (SINGLE) { const id = new URLSearchParams(location.search).get('note'); if (recs.get('note-' + id)) openNote(id); return; }
     if (!isMobile()) { const first = filtered()[0]; if (first) openNote(first.id); }
     Sync.on(st => { renderSync(st); if (st.status === 'synced') refreshMeta(); });
     await handleLaunchParams();
@@ -1326,6 +1429,6 @@ const App = (() => {
     setInterval(() => renderSync(Sync.state), 30000);
   }
 
-  return { init, uid, onRemoteChange, launch, setSysDark, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, importData, saveNow, lockAll } };
+  return { init, uid, onRemoteChange, launch, setSysDark, toggleSide, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, importData, saveNow, lockAll } };
 })();
 App.init();

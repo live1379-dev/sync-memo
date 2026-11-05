@@ -176,8 +176,17 @@ final class Auth {
 }
 
 // ───────── 앱 ─────────
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
+final class DragStrip: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func mouseDown(with e: NSEvent) {
+        if e.clickCount == 2 { window?.performZoom(nil) } else { window?.performDrag(with: e) }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     var window: NSWindow!
+    var cfg: WKWebViewConfiguration!
+    var noteWindows: [String: NSWindow] = [:]
     var web: WKWebView!
     let auth = Auth()
     var selftest: String?
@@ -185,29 +194,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     func applicationDidFinishLaunching(_ n: Notification) {
         selftest = CommandLine.arguments.first { $0.hasPrefix("--selftest=") }.map { String($0.dropFirst(11)) }
         buildMenu()
-        let cfg = WKWebViewConfiguration()
+        cfg = WKWebViewConfiguration()
         cfg.setURLSchemeHandler(Files(), forURLScheme: SCHEME)
         cfg.userContentController.add(self, name: "native")
         cfg.websiteDataStore = selftest == nil ? .default() : .nonPersistent() // 자가검사는 실제 메모·드라이브를 건드리지 않는다
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        web = WKWebView(frame: .zero, configuration: cfg)
-        web.navigationDelegate = self
-        web.uiDelegate = self
-        web.allowsBackForwardNavigationGestures = false
-        web.setValue(false, forKey: "drawsBackground") // 로딩 중 흰 화면 대신 창 배경색
-        if #available(macOS 13.3, *) { web.isInspectable = true }
-
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
-                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                          backing: .buffered, defer: false)
+        web = makeWeb()
+        window = makeWindow(width: 1200, height: 780, web: web)
         window.title = "싱크 메모"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.minSize = NSSize(width: 420, height: 480)
-        window.backgroundColor = NSColor(name: nil) { a in
-            a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(srgbRed: 0.137, green: 0.137, blue: 0.145, alpha: 1) : NSColor(srgbRed: 0.925, green: 0.922, blue: 0.902, alpha: 1)
-        }
-        window.contentView = web
         window.center()
         window.setFrameAutosaveName("SyncMemoMain")
         window.makeKeyAndOrderFront(nil)
@@ -217,7 +211,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
 
-    func js(_ code: String) { web.evaluateJavaScript(code, completionHandler: nil) }
+    func makeWeb() -> WKWebView {
+        let w = WKWebView(frame: .zero, configuration: cfg)
+        w.navigationDelegate = self
+        w.uiDelegate = self
+        w.allowsBackForwardNavigationGestures = false
+        w.setValue(false, forKey: "drawsBackground") // 로딩 중 흰 화면 대신 창 배경색
+        if #available(macOS 13.3, *) { w.isInspectable = true }
+        return w
+    }
+
+    /// 화면이 제목 표시줄까지 이어지는 창 + 맨 위 28px 끌기 띠 (끌면 창 이동, 두 번 클릭하면 확대)
+    func makeWindow(width: CGFloat, height: CGFloat, web wv: WKWebView) -> NSWindow {
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                         backing: .buffered, defer: false)
+        w.titleVisibility = .hidden
+        w.titlebarAppearsTransparent = true
+        w.minSize = NSSize(width: 380, height: 420)
+        w.backgroundColor = NSColor(name: nil) { a in
+            a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(srgbRed: 0.137, green: 0.137, blue: 0.145, alpha: 1) : NSColor(srgbRed: 0.925, green: 0.922, blue: 0.902, alpha: 1)
+        }
+        let box = NSView()
+        let strip = DragStrip()
+        for v in [wv, strip] as [NSView] { v.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(v) }
+        NSLayoutConstraint.activate([
+            wv.leadingAnchor.constraint(equalTo: box.leadingAnchor), wv.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            wv.topAnchor.constraint(equalTo: box.topAnchor), wv.bottomAnchor.constraint(equalTo: box.bottomAnchor),
+            strip.leadingAnchor.constraint(equalTo: box.leadingAnchor), strip.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            strip.topAnchor.constraint(equalTo: box.topAnchor), strip.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        w.contentView = box
+        w.isReleasedWhenClosed = false
+        w.delegate = self
+        return w
+    }
+
+    /// 목록에서 메모를 더블클릭 → 그 메모만 새 창 (애플 메모처럼). 같은 메모는 창 하나.
+    func openNoteWindow(_ id: String, _ title: String) {
+        guard !id.isEmpty else { return }
+        if let w = noteWindows[id] { w.makeKeyAndOrderFront(nil); return }
+        let wv = makeWeb()
+        let w = makeWindow(width: 560, height: 680, web: wv)
+        w.title = title
+        let f = window.frame, k = CGFloat(noteWindows.count % 8) * 26
+        w.setFrameTopLeftPoint(NSPoint(x: f.minX + 80 + k, y: f.maxY - 50 - k))
+        noteWindows[id] = w
+        var c = URLComponents(url: START, resolvingAgainstBaseURL: false)!
+        c.queryItems = [URLQueryItem(name: "note", value: id), URLQueryItem(name: "single", value: "1")]
+        wv.load(URLRequest(url: c.url!))
+        w.makeKeyAndOrderFront(nil)
+    }
+    func windowWillClose(_ n: Notification) {
+        guard let w = n.object as? NSWindow else { return }
+        noteWindows = noteWindows.filter { $0.value !== w }
+    }
+
+    /// 지금 앞에 있는 창의 화면 (메모 창이면 그 창)
+    var activeWeb: WKWebView {
+        for w in [NSApp.keyWindow, NSApp.mainWindow].compactMap({ $0 }) {
+            if let v = w.contentView?.subviews.first(where: { $0 is WKWebView }) as? WKWebView { return v }
+        }
+        return web
+    }
+    func js(_ code: String) { activeWeb.evaluateJavaScript(code, completionHandler: nil) }
+    func jsMain(_ code: String) { window.makeKeyAndOrderFront(nil); web.evaluateJavaScript(code, completionHandler: nil) }
 
     // 메뉴 — 편집 단축키(⌘C/⌘V/⌘Z…)가 동작하려면 반드시 필요하다
     func buildMenu() {
@@ -266,7 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             item("본문", #selector(body), "0", [.command, .option]),
             item("체크리스트", #selector(checklist), "l", [.command, .shift]),
         ])
-        menu("보기", [item("전체 화면", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])])
+        menu("보기", [item("폴더 칸 보기/숨기기", #selector(toggleSide), "s", [.command, .option]), .separator(), item("전체 화면", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])])
         menu("윈도우", [
             item("최소화", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("확대/축소", #selector(NSWindow.performZoom(_:))), .separator(),
@@ -274,9 +332,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         ])
         NSApp.mainMenu = main
     }
-    @objc func settings() { js("App.openSettings()") }
-    @objc func newNote() { js("App.newNote()") }
-    @objc func search() { js("App.focusSearch()") }
+    @objc func settings() { jsMain("App.openSettings()") }
+    @objc func toggleSide() { jsMain("App.toggleSide()") }
+    @objc func newNote() { jsMain("App.newNote()") }
+    @objc func search() { jsMain("App.focusSearch()") }
     @objc func printNote() { doPrint() }
     @objc func bold() { js("document.execCommand('bold')") }
     @objc func italic() { js("document.execCommand('italic')") }
@@ -287,10 +346,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     @objc func body() { js("document.execCommand('formatBlock',false,'<p>')") }
     @objc func checklist() { js("document.querySelector('[data-cmd=checklist]')?.click()") }
 
-    func doPrint() {
-        let op = web.printOperation(with: NSPrintInfo.shared)
-        op.view?.frame = web.bounds
-        op.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+    func doPrint(_ target: WKWebView? = nil) {
+        let t = target ?? activeWeb
+        let op = t.printOperation(with: NSPrintInfo.shared)
+        op.view?.frame = t.bounds
+        op.runModal(for: t.window ?? window, delegate: nil, didRun: nil, contextInfo: nil)
     }
 
     // ───────── 화면 → 네이티브 ─────────
@@ -299,44 +359,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
               let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any], let id = o["id"] as? Int,
               let method = o["method"] as? String else { return }
         let a = o["args"] as? [String: Any] ?? [:]
+        let wv = m.webView ?? web!
         let cid = a["clientId"] as? String ?? "", sec = a["clientSecret"] as? String ?? ""
         switch method {
-        case "auth.status": reply(id, true, ["connected": selftest == nil && auth.connected])
+        case "auth.status": reply(wv, id, true, ["connected": selftest == nil && auth.connected])
         case "auth.login":
             auth.login(clientId: cid, secret: sec) { r in
-                switch r { case .success: self.reply(id, true, nil); case .failure(let e): self.reply(id, false, e.msg) }
+                switch r { case .success: self.reply(wv, id, true, nil); case .failure(let e): self.reply(wv, id, false, e.msg) }
             }
         case "auth.token":
             auth.token(clientId: cid, secret: sec, force: a["force"] as? Bool ?? false) { r in
-                switch r { case .success(let t): self.reply(id, true, ["token": t]); case .failure(let e): self.reply(id, false, e.msg) }
+                switch r { case .success(let t): self.reply(wv, id, true, ["token": t]); case .failure(let e): self.reply(wv, id, false, e.msg) }
             }
-        case "auth.logout": auth.logout(); reply(id, true, nil)
-        case "http": http(id, a)
+        case "auth.logout": auth.logout(); reply(wv, id, true, nil)
+        case "http": http(wv, id, a)
+        case "openWindow": openNoteWindow(a["id"] as? String ?? "", a["title"] as? String ?? "메모"); reply(wv, id, true, nil)
+        case "setTitle": wv.window?.title = a["title"] as? String ?? "메모"; reply(wv, id, true, nil)
         case "saveFile":
             let p = NSSavePanel()
             p.nameFieldStringValue = a["name"] as? String ?? "메모.txt"
-            p.beginSheetModal(for: window) { r in
-                guard r == .OK, let url = p.url else { return self.reply(id, true, nil) }
-                do { try (a["text"] as? String ?? "").write(to: url, atomically: true, encoding: .utf8); self.reply(id, true, ["path": url.lastPathComponent]) }
-                catch { self.reply(id, false, error.localizedDescription) }
+            p.beginSheetModal(for: wv.window ?? window) { r in
+                guard r == .OK, let url = p.url else { return self.reply(wv, id, true, nil) }
+                do { try (a["text"] as? String ?? "").write(to: url, atomically: true, encoding: .utf8); self.reply(wv, id, true, ["path": url.lastPathComponent]) }
+                catch { self.reply(wv, id, false, error.localizedDescription) }
             }
-        case "print": doPrint(); reply(id, true, nil)
+        case "print": doPrint(wv); reply(wv, id, true, nil)
         case "share":
             let picker = NSSharingServicePicker(items: [a["text"] as? String ?? ""])
-            picker.show(relativeTo: NSRect(x: web.bounds.maxX - 90, y: web.bounds.maxY - 60, width: 1, height: 1), of: web, preferredEdge: .minY)
-            reply(id, true, nil)
+            picker.show(relativeTo: NSRect(x: wv.bounds.maxX - 90, y: wv.bounds.maxY - 60, width: 1, height: 1), of: wv, preferredEdge: .minY)
+            reply(wv, id, true, nil)
         case "openExternal":
             if let u = URL(string: a["url"] as? String ?? "") { NSWorkspace.shared.open(u) }
-            reply(id, true, nil)
-        default: reply(id, false, "알 수 없는 요청 \(method)")
+            reply(wv, id, true, nil)
+        default: reply(wv, id, false, "알 수 없는 요청 \(method)")
         }
     }
 
     /// 구글 API 호출 대행 (내장 화면의 syncmemo:// 출처는 구글 CORS 밖이라)
-    func http(_ id: Int, _ a: [String: Any]) {
-        if selftest != nil { return reply(id, true, ["status": 0, "body": "selftest"]) }
+    func http(_ wv: WKWebView, _ id: Int, _ a: [String: Any]) {
+        if selftest != nil { return reply(wv, id, true, ["status": 0, "body": "selftest"]) }
         guard let u = URL(string: a["url"] as? String ?? ""), ["oauth2.googleapis.com", "www.googleapis.com"].contains(u.host ?? "") else {
-            return reply(id, false, "허용되지 않은 주소")
+            return reply(wv, id, false, "허용되지 않은 주소")
         }
         var req = URLRequest(url: u)
         req.httpMethod = a["method"] as? String ?? "GET"
@@ -344,16 +407,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if let b = a["body"] as? String { req.httpBody = b.data(using: .utf8) }
         URLSession.shared.dataTask(with: req) { data, resp, err in
             DispatchQueue.main.async {
-                if let err = err { return self.reply(id, false, err.localizedDescription) }
-                self.reply(id, true, ["status": (resp as? HTTPURLResponse)?.statusCode ?? 0, "body": String(decoding: data ?? Data(), as: UTF8.self)])
+                if let err = err { return self.reply(wv, id, false, err.localizedDescription) }
+                self.reply(wv, id, true, ["status": (resp as? HTTPURLResponse)?.statusCode ?? 0, "body": String(decoding: data ?? Data(), as: UTF8.self)])
             }
         }.resume()
     }
 
-    func reply(_ id: Int, _ ok: Bool, _ data: Any?) {
+    func reply(_ wv: WKWebView, _ id: Int, _ ok: Bool, _ data: Any?) {
         let v = data ?? NSNull()
         let json = (try? JSONSerialization.data(withJSONObject: v, options: [.fragmentsAllowed])).map { String(decoding: $0, as: UTF8.self) } ?? "null"
-        js("window.__native&&__native.resolve(\(id),\(ok),\(json))")
+        wv.evaluateJavaScript("window.__native&&__native.resolve(\(id),\(ok),\(json))", completionHandler: nil)
     }
 
     // ───────── 웹뷰 ─────────
@@ -373,7 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = p.allowsMultipleSelection
         panel.canChooseDirectories = false
-        panel.beginSheetModal(for: window) { r in completionHandler(r == .OK ? panel.urls : nil) }
+        panel.beginSheetModal(for: w.window ?? window) { r in completionHandler(r == .OK ? panel.urls : nil) }
     }
     @available(macOS 12.0, *)
     func webView(_ w: WKWebView, requestMediaCapturePermissionFor o: WKSecurityOrigin, initiatedByFrame f: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
@@ -407,12 +470,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         await App._test.saveNow();
         r.saved = [...App._test.recs().values()].some(x => x.kind === 'note' && (x.text || '').includes('59번째'));
         const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('pw'), 'PBKDF2', false, ['deriveKey']); r.pbkdf2 = !!k;
+        r.noteId = document.querySelector('.card.on')?.dataset.id; r.sideW = Math.round(document.getElementById('side').getBoundingClientRect().width); r.fs = getComputedStyle(document.getElementById('editor')).fontSize;
         return JSON.stringify(r);
         """
         web.callAsyncJavaScript(code, arguments: [:], in: nil, in: .page) { res in
             var text = ""
             switch res { case .success(let v): text = (v as? String) ?? "\(v)"; case .failure(let e): text = "{\"error\":\(String(reflecting: e.localizedDescription))}" }
+            // 끌기 띠: 창 맨 위를 누르면 화면이 아니라 띠가 받는지
+            let box = self.window.contentView!
+            let hit = box.hitTest(NSPoint(x: box.bounds.midX, y: box.bounds.height - 10))
+            text = String(text.trimmingCharacters(in: .whitespacesAndNewlines).dropLast()) + ",\"dragStrip\":\(hit is DragStrip),\"belowIsWeb\":\(box.hitTest(NSPoint(x: box.bounds.midX, y: box.bounds.height - 60)) is WKWebView)}"
             try? text.write(toFile: out, atomically: true, encoding: .utf8)
+            // 더블클릭 새 창
+            if let d = text.data(using: .utf8), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], let id = j["noteId"] as? String {
+                self.openNoteWindow(id, "검사")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    let w = self.noteWindows[id]
+                    let v = w?.contentView?.subviews.first { $0 is WKWebView } as? WKWebView
+                    v?.evaluateJavaScript("JSON.stringify({single: document.getElementById('app').classList.contains('single'), len: document.getElementById('editor').innerText.length, listShown: getComputedStyle(document.getElementById('list')).display !== 'none'})") { r, _ in
+                        try? ((r as? String) ?? "null").write(toFile: out + ".win", atomically: true, encoding: .utf8)
+                        w?.close()
+                        self.finishSelftest(out)
+                    }
+                }
+                return
+            }
+            self.finishSelftest(out)
+        }
+    }
+    func finishSelftest(_ out: String) {
+        do {
             // 앱 창 내용만 이미지로 (화면 전체가 아니라)
             self.web.takeSnapshot(with: nil) { img, _ in
                 if let img = img, let t = img.tiffRepresentation, let rep = NSBitmapImageRep(data: t), let png = rep.representation(using: .png, properties: [:]) {

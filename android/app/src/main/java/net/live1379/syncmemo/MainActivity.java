@@ -2,7 +2,10 @@ package net.live1379.syncmemo;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.StatusBarManager;
+import android.content.ComponentName;
 import android.content.ContentValues;
+import android.graphics.drawable.Icon;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -299,6 +302,22 @@ public class MainActivity extends Activity {
             case "bars":
                 setBars(a.optBoolean("dark"));
                 resolve(id, JSONObject.NULL);
+                break;
+            case "addTile":
+                if (Build.VERSION.SDK_INT >= 33) {
+                    StatusBarManager sbm = getSystemService(StatusBarManager.class);
+                    sbm.requestAddTileService(new ComponentName(this, NewNoteTile.class), "새 메모",
+                            Icon.createWithResource(this, R.drawable.ic_tile), getMainExecutor(), result -> {
+                                try {
+                                    String msg = result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ? "알림창에 추가했어요"
+                                            : result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED ? "이미 알림창에 있어요"
+                                            : "추가하지 않았어요 — 알림창 편집(연필)에서 '새 메모'를 끌어다 놓아도 됩니다";
+                                    resolve(id, new JSONObject().put("msg", msg));
+                                } catch (Exception ignored) { }
+                            });
+                } else {
+                    resolve(id, new JSONObject().put("msg", "알림창을 내려 편집(연필) → '새 메모'를 끌어다 놓으세요"));
+                }
                 break;
             case "openExternal":
                 openExternal(a.getString("url"));

@@ -42,7 +42,7 @@ body { overscroll-behavior: none; }
 .native-mac .list-head { padding-top: 34px; }
 .native-mac .edit-head { padding-top: 32px; }
 html, body { margin: 0; height: 100%; }
-body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font); -webkit-font-smoothing: antialiased; overflow: hidden; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; overflow: hidden; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 input, select, textarea { font: inherit; color: inherit; }
@@ -130,14 +130,14 @@ nav a svg { width: 18px; height: 18px; color: var(--accent); }
 #toolbar button { min-width: 38px; height: 34px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; color: var(--ink2); font-size: 15px; }
 #toolbar button:hover, #toolbar button.on { background: var(--hover); color: var(--ink); }
 #paper { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-#editor { max-width: 760px; margin: 0 auto; padding: 18px 28px 40vh; outline: none; min-height: 100%; font-size: 16px; line-height: 1.6; word-wrap: break-word; caret-color: var(--accent); }
-#editor:empty::before { content: "제목"; color: var(--ink3); font-size: 26px; font-weight: 700; }
+#editor { max-width: 760px; margin: 0 auto; padding: 18px 28px 40vh; outline: none; min-height: 100%; font-size: var(--fs, 14px); line-height: 1.6; word-wrap: break-word; caret-color: var(--accent); }
+#editor:empty::before { content: "제목"; color: var(--ink3); font-size: 1.6em; font-weight: 700; }
 #editor > :first-child { margin-top: 0; }
-#editor h1 { font-size: 26px; line-height: 1.25; margin: .2em 0 .4em; letter-spacing: -.02em; }
-#editor h2 { font-size: 20px; margin: .9em 0 .3em; letter-spacing: -.01em; }
-#editor h3 { font-size: 17px; margin: .8em 0 .2em; }
+#editor h1 { font-size: 1.6em; line-height: 1.25; margin: .2em 0 .4em; letter-spacing: -.02em; }
+#editor h2 { font-size: 1.27em; margin: .9em 0 .3em; letter-spacing: -.01em; }
+#editor h3 { font-size: 1.07em; margin: .8em 0 .2em; }
 #editor p, #editor div:not(.att) { margin: 0; min-height: 1.6em; }
-#editor pre { font: 14px/1.5 var(--mono); background: var(--hover); padding: 10px 12px; border-radius: 8px; white-space: pre-wrap; margin: .4em 0; }
+#editor pre { font: .9em/1.5 var(--mono); background: var(--hover); padding: 10px 12px; border-radius: 8px; white-space: pre-wrap; margin: .4em 0; }
 #editor blockquote { border-left: 3px solid var(--accent); margin: .4em 0; padding-left: 12px; color: var(--ink2); }
 #editor ul, #editor ol { padding-left: 1.6em; margin: .2em 0; }
 #editor ul.checklist { list-style: none; padding-left: 0; }
@@ -239,7 +239,21 @@ nav a svg { width: 18px; height: 18px; color: var(--accent); }
 @media (min-width: 761px) and (max-width: 1050px) {
   #app { grid-template-columns: 190px 280px 1fr; }
 }
+/* 폴더 칸 숨김 (넓은 화면 — 펼친 폴드·맥) */
+#app { transition: grid-template-columns .2s ease; }
+#btnSideToggle { display: none; }
+@media (min-width: 761px) {
+  #btnSideToggle { display: inline-flex; }
+  #app.side-hidden { grid-template-columns: 0 320px 1fr; }
+  #app.side-hidden #side { visibility: hidden; padding-left: 0; padding-right: 0; border: 0; overflow: hidden; }
+}
+@media (min-width: 761px) and (max-width: 1050px) { #app.side-hidden { grid-template-columns: 0 290px 1fr; } }
 @media print {
   #side, #list, .edit-head, #toolbar { display: none !important; }
   #app { display: block; } body { overflow: visible; } #paper { overflow: visible; }
 }
+
+/* 단일 메모 창 (맥: 목록에서 더블클릭) */
+#app.single { grid-template-columns: 1fr !important; }
+#app.single #side, #app.single #list, #app.single .edit-head .back { display: none !important; }
+.native-mac #app.single .edit-head { padding-top: 34px; }
