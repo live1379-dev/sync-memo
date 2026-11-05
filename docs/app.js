@@ -1183,11 +1183,14 @@ const App = (() => {
       let upd = 0;
       for (const f of files) {
         const lines = String(f.text).replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
-        if (lines[0].trim() !== f.name.trim()) lines.unshift(f.name);   // 첫 줄 = 메모 제목
-        const html = lines.map(l => `<p>${l.trim() ? link(l) : '<br>'}</p>`).join('');
-        // 같은 폴더에 같은 제목 메모가 있으면 그 메모를 고쳐 쓴다(정정본 — 중복 메모를 만들지 않음)
+        // 같은 폴더에 같은 제목 메모가 있으면 그 메모를 고쳐 쓴다(정정본 — 중복 메모를 만들지 않음).
+        // 파일 이름 "옛제목 → 새제목" 이면 옛제목 메모를 새 제목으로 고친다(2026-11-05 콘티 날짜 정정)
         const fid = f.folder ? folders().find(x => x.name === f.folder)?.id || null : null;
-        const ex = notes().find(n => !n.trashedAt && !n.locked && (n.folderId || null) === fid && (n.title || '').trim() === lines[0].trim());
+        const same = t => notes().find(n => !n.trashedAt && !n.locked && (n.folderId || null) === fid && (n.title || '').trim() === t.trim());
+        const [oldT, newT] = f.name.includes('→') ? f.name.split('→').map(s => s.trim()) : [null, f.name];
+        if (lines[0].trim() !== newT.trim()) lines.unshift(newT);   // 첫 줄 = 메모 제목
+        const html = lines.map(l => `<p>${l.trim() ? link(l) : '<br>'}</p>`).join('');
+        const ex = (oldT && same(oldT)) || same(lines[0]);
         if (ex && (!f.folder || fid)) {
           if (ex.id === curId) await saveNow();
           ex.html = html; derive(ex); await persist(ex); upd++;
