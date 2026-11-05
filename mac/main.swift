@@ -188,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let cfg = WKWebViewConfiguration()
         cfg.setURLSchemeHandler(Files(), forURLScheme: SCHEME)
         cfg.userContentController.add(self, name: "native")
-        cfg.websiteDataStore = .default()
+        cfg.websiteDataStore = selftest == nil ? .default() : .nonPersistent() // 자가검사는 실제 메모·드라이브를 건드리지 않는다
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
         web = WKWebView(frame: .zero, configuration: cfg)
         web.navigationDelegate = self
@@ -301,7 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let a = o["args"] as? [String: Any] ?? [:]
         let cid = a["clientId"] as? String ?? "", sec = a["clientSecret"] as? String ?? ""
         switch method {
-        case "auth.status": reply(id, true, ["connected": auth.connected])
+        case "auth.status": reply(id, true, ["connected": selftest == nil && auth.connected])
         case "auth.login":
             auth.login(clientId: cid, secret: sec) { r in
                 switch r { case .success: self.reply(id, true, nil); case .failure(let e): self.reply(id, false, e.msg) }
@@ -334,6 +334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     /// 구글 API 호출 대행 (내장 화면의 syncmemo:// 출처는 구글 CORS 밖이라)
     func http(_ id: Int, _ a: [String: Any]) {
+        if selftest != nil { return reply(id, true, ["status": 0, "body": "selftest"]) }
         guard let u = URL(string: a["url"] as? String ?? ""), ["oauth2.googleapis.com", "www.googleapis.com"].contains(u.host ?? "") else {
             return reply(id, false, "허용되지 않은 주소")
         }
@@ -393,13 +394,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let code = """
         const r = { secure: isSecureContext, subtle: !!(crypto && crypto.subtle), native: Native.platform, idb: !!indexedDB };
         r.status = await Native.call('auth.status');
-        const count = () => [...App._test.recs().values()].filter(x => x.kind === 'note' && !x.purged).length;
-        r.before = count();
-        await App._test.importData({ notes: [{ id: 'mac-selftest-' + Date.now(), html: '<h1>맥 자가검사</h1><p>본문</p>' }] });
-        r.after = count();
+        await new Promise(res => setTimeout(res, 400));
+        App.newNote();
+        await new Promise(res => setTimeout(res, 200));
+        const long = Array.from({ length: 60 }, (_, i) => i % 2 ? '- ' + i + '번째 줄 설명' : 'https://www.youtube.com/watch?v=abc' + i).join('\\n');
+        const dt = new DataTransfer(); dt.setData('text/plain', long); dt.setData('text/html', '<h1><b>' + long.split('\\n').join('</b></h1><h1><b>') + '</b></h1>');
+        document.getElementById('editor').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        await new Promise(res => setTimeout(res, 300));
+        const e = document.getElementById('editor');
+        r.paste = { h1: e.querySelectorAll('h1').length, bold: e.querySelectorAll('b,strong').length, p: e.querySelectorAll('p').length, links: e.querySelectorAll('a[href]').length };
+        r.layout = { scroll: document.scrollingElement.scrollTop + document.getElementById('app').scrollTop, headTop: Math.round(document.querySelector('.list-head').getBoundingClientRect().top), editH: Math.round(document.getElementById('edit').getBoundingClientRect().height), vh: innerHeight };
+        await App._test.saveNow();
+        r.saved = [...App._test.recs().values()].some(x => x.kind === 'note' && (x.text || '').includes('59번째'));
         const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('pw'), 'PBKDF2', false, ['deriveKey']); r.pbkdf2 = !!k;
-        try { const x = await Native.call('http', { url: 'https://www.googleapis.com/drive/v3/about?fields=user', method: 'GET', headers: {}, body: null }); r.http = x.status; } catch (e) { r.http = 'err ' + e.message; }
-        r.theme = getComputedStyle(document.body).backgroundColor;
         return JSON.stringify(r);
         """
         web.callAsyncJavaScript(code, arguments: [:], in: nil, in: .page) { res in

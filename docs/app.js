@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.2';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -389,6 +389,24 @@ const App = (() => {
     }
   }
   function exec(cmd, val) { restoreSel(); document.execCommand(cmd, false, val); afterEdit(); }
+  // 여러 줄 글을 문단으로 넣는다. 첫 줄은 지금 커서 자리(새 메모면 제목), 둘째 줄부터는 본문 크기. 주소만 있는 줄은 링크.
+  function pastePlain(text) {
+    restoreSel();
+    const lines = text.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').split('\n');
+    while (lines.length > 1 && !lines[lines.length - 1].trim()) lines.pop();
+    lines.forEach((line, i) => {
+      if (i) {
+        document.execCommand('insertParagraph');
+        if (caretEl('h1,h2,h3,pre')) document.execCommand('formatBlock', false, '<p>');
+      }
+      const t = line.trim();
+      if (/^https?:\/\/\S+$/.test(t)) document.execCommand('insertHTML', false, `<a href="${esc(t)}">${esc(t)}</a>`);
+      else if (line) document.execCommand('insertText', false, line);
+    });
+    afterEdit();
+    const r = getSelection().rangeCount && getSelection().getRangeAt(0).getBoundingClientRect();
+    if (r && r.bottom > $('#paper').getBoundingClientRect().bottom) caretEl('p,h1,h2,h3,li,div,pre')?.scrollIntoView({ block: 'nearest' });
+  }
   function insertHTML(html) { restoreSel(); document.execCommand('insertHTML', false, html); afterEdit(); }
   function afterEdit() { fixColors(); normalizeChecklists(); scheduleSave(); }
   function caretEl(sel = 'li') {
@@ -1210,9 +1228,9 @@ const App = (() => {
       const dt = e.clipboardData; if (!dt) return;
       const imgs = [...dt.files].filter(f => f.type.startsWith('image/'));
       if (imgs.length) { e.preventDefault(); insertImages(imgs); return; }
-      const txt = dt.getData('text/plain'), html = dt.getData('text/html');
-      if (/^https?:\/\/\S+$/.test(txt.trim())) { e.preventDefault(); insertHTML(`<a href="${esc(txt.trim())}">${esc(txt.trim())}</a>&nbsp;`); return; }
-      if (html) { e.preventDefault(); insertHTML(sanitize(html)); }
+      // 붙여넣기는 서식(글자 크기·굵기·색)을 버리고 글자·줄바꿈만 — 오너 지시 2026-11-05
+      const txt = dt.getData('text/plain') || textOf(sanitize(dt.getData('text/html') || ''));
+      if (txt) { e.preventDefault(); pastePlain(txt); }
     });
     editor.addEventListener('drop', e => {
       const imgs = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image/'));
@@ -1228,6 +1246,9 @@ const App = (() => {
     });
     document.addEventListener('visibilitychange', () => { if (document.hidden) { saveNow(); if (lockPw) { clearTimeout(lockTimer); lockTimer = setTimeout(lockAll, 5 * 60000); } } });
     addEventListener('pagehide', () => saveNow());
+    // 창 전체가 밀리면 (커서 따라가기 등) 즉시 제자리 — 각 칸은 자기 안에서만 스크롤
+    addEventListener('scroll', () => { if (scrollY || scrollX) scrollTo(0, 0); });
+    app.addEventListener('scroll', () => { if (app.scrollTop) app.scrollTop = 0; });
   }
 
   const today = () => new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });

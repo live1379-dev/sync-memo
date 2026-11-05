@@ -199,6 +199,23 @@ try {
   const names = [...drive.files.values()].map(f => f.name);
   check('드라이브: 레코드당 버전 파일 1개로 정리됨', new Set(names).size === names.length, `${names.length}개`);
 
+  // 11-1. 긴 글 붙여넣기: 서식 버리고 줄 단위, 화면 안 밀림
+  await A.p.click('#btnNew');
+  const long = Array.from({ length: 60 }, (_, i) => i % 2 ? `- ${i}번째 줄 설명` : `https://www.youtube.com/watch?v=abc${i}`).join('\n');
+  await A.p.evaluate(t => {
+    const dt = new DataTransfer(); dt.setData('text/plain', t); dt.setData('text/html', '<h1 style="font-size:40px"><b>' + t.split('\n').join('</b></h1><h1><b>') + '</b></h1>');
+    document.getElementById('editor').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, long);
+  const pv = await A.p.evaluate(() => {
+    const e = document.getElementById('editor');
+    return { h1: e.querySelectorAll('h1').length, bold: e.querySelectorAll('b,strong').length, p: e.querySelectorAll('p').length, links: e.querySelectorAll('a[href^="https://www.youtube.com"]').length,
+      scroll: document.scrollingElement.scrollTop + document.getElementById('app').scrollTop, headVisible: document.querySelector('.list-head').getBoundingClientRect().top >= 0,
+      editH: document.getElementById('edit').getBoundingClientRect().height, vh: innerHeight };
+  });
+  check('붙여넣기: 서식 없이 줄 단위 (제목 1줄 + 본문, 링크 유지)', pv.h1 === 1 && pv.bold === 0 && pv.p >= 59 && pv.links === 30, JSON.stringify(pv));
+  check('긴 글 붙여넣어도 화면이 밀리지 않음', pv.scroll === 0 && pv.headVisible && pv.editH <= pv.vh, JSON.stringify(pv));
+  await A.p.screenshot({ path: SHOTS + 'paste-long.png' });
+
   // 12. 정리·변환
   const s = await A.p.evaluate(() => App._test.sanitize('<p onclick="x()">a<script>alert(1)</script><img src="javascript:1"><a href="javascript:alert(1)">l</a><span style="color:red">r</span></p>'));
   check('붙여넣기 정리: script·onclick·javascript: 제거', !/script|onclick|javascript|style/.test(s), s);
