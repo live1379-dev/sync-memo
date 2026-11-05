@@ -10,19 +10,18 @@ function run(argv) {
     for (const f of acc.folders()) {
       const fname = f.name();
       if (/^(Recently Deleted|최근 삭제된 항목)$/.test(fname)) continue;
-      for (const n of f.notes()) {
-        try {
-          if (n.passwordProtected()) { skipped++; continue; }
-          folders.set(fname, true);
-          notes.push({
-            id: 'apple-' + n.id().split('/').pop().replace(/[^A-Za-z0-9]/g, ''),
-            folderName: fname,
-            html: n.body(),
-            createdAt: n.creationDate().getTime(),
-            updatedAt: n.modificationDate().getTime(),
-          });
-        } catch (e) { skipped++; }
-      }
+      // 메모를 하나씩 묻지 않고 속성별로 한 번에 받는다(1,900개 기준 수 시간 → 수십 초)
+      const fn = f.notes;
+      let ids, bodies, cds, mds, locks;
+      try { ids = fn.id(); cds = fn.creationDate(); mds = fn.modificationDate(); locks = fn.passwordProtected(); }
+      catch (e) { skipped += f.notes.length; continue; }
+      // 본문은 사진이 들어 있으면 커서 한 번에 받다 시간 초과가 난다 → 그때는 하나씩
+      try { bodies = fn.body(); } catch (e) { bodies = ids.map((_, i) => { try { return locks[i] ? null : fn[i].body(); } catch (x) { return null; } }); }
+      ids.forEach((id, i) => {
+        if (locks[i] || bodies[i] == null) { skipped++; return; }
+        folders.set(fname, true);
+        notes.push({ id: 'apple-' + id.split('/').pop().replace(/[^A-Za-z0-9]/g, ''), folderName: fname, html: bodies[i], createdAt: cds[i].getTime(), updatedAt: mds[i].getTime() });
+      });
     }
   }
   const data = { format: 'apple-notes-export', version: 1, exportedAt: Date.now(), folders: [], notes };
