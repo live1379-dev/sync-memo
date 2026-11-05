@@ -1,0 +1,12 @@
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="new" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/sc_new">
+        <intent android:action="net.live1379.syncmemo.NEW" android:targetPackage="net.live1379.syncmemo" android:targetClass="net.live1379.syncmemo.MainActivity">
+            <extra android:name="template" android:value="1" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="todo" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/sc_todo">
+        <intent android:action="net.live1379.syncmemo.NEW" android:targetPackage="net.live1379.syncmemo" android:targetClass="net.live1379.syncmemo.MainActivity">
+            <extra android:name="template" android:value="할 일" />
+        </intent>
+    </shortcut>
+</shortcuts>

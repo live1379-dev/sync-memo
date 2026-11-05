@@ -27,23 +27,42 @@
 
 단축키(맥): ⌘N 새 메모 · ⌥⌘F 검색 · ⌘⇧L 체크리스트 · ⌘⌥1/2/3/0 제목/머리말/부머리말/본문 · Tab 들여쓰기 · ⌘⌫ 삭제
 
-## 처음 설정 (1회)
-1. **배포**: `docs/` 를 GitHub Pages(main 브랜치 /docs)로 올린다 (예정: `https://live1379-dev.github.io/sync-memo/`).
-2. **구글 클라우드** (console.cloud.google.com)
-   1. 새 프로젝트 → "API 및 서비스 → 라이브러리" 에서 **Google Drive API 사용**
-   2. "Google 인증 플랫폼(OAuth 동의 화면)" → 외부 → 앱 이름·이메일 → 데이터 액세스에 `.../auth/drive.appdata` 추가
-      → 대상(Audience)에서 **앱 게시(프로덕션)**. *테스트 상태로 두면 7일마다 로그인이 풀린다.*
-   3. "클라이언트 → 클라이언트 만들기 → **웹 애플리케이션**"
-      - 승인된 JavaScript 원본: `https://live1379-dev.github.io`
-      - 승인된 리디렉션 URI: `https://live1379-dev.github.io/sync-memo/` (앱 설정 화면에 정확한 주소가 나온다)
-   4. 클라이언트 ID·보안 비밀번호 복사
-3. **맥**: 앱 열기 → 설정(톱니) → ID·비밀번호 붙여넣기 → **구글 연결** → 허용.
-   ("확인되지 않은 앱" 경고가 나오면 고급 → 이동. 내 프로젝트라 괜찮다.)
-   Safari 파일 메뉴 → "Dock에 추가" 또는 Chrome 주소창 설치 아이콘으로 앱처럼 설치.
-4. **폰**: 맥 설정의 **"다른 기기 연결 링크 복사"** → 카톡 나에게 보내기 → 폰 크롬에서 열기 → 설정 → 구글 연결
-   → 크롬 메뉴 "홈 화면에 추가(설치)".
+## 앱 3가지 (같은 화면, 같은 동기화)
+| | 위치 | 설치 |
+|---|---|---|
+| **안드로이드 앱** | `android/` (Java, 화면은 `docs/` 를 앱 안에 내장) | `SyncMemo.apk` 를 폰으로 옮겨 설치 |
+| **맥 앱** | `mac/` (Swift + WKWebView, 화면 내장) | `/Applications/싱크 메모.app` (빌드: `mac/build.sh`) |
+| 웹 | `docs/` → https://live1379-dev.github.io/sync-memo/ | 브라우저 |
 
-보안 비밀번호는 저장소(공개 깃허브)에 넣지 않는다 — 각 기기 설정에만 저장된다.
+네이티브가 맡는 것: 구글 로그인 · 마이크 · 사진/파일 선택 · 파일 저장 · 인쇄 · 공유(안드로이드: 다른 앱 → 싱크 메모 공유받기, 바로가기) ·
+시스템 다크 모드·상태 표시줄 색 · 메뉴 단축키(맥). 화면을 고치면 `docs/` 하나만 고치고 두 앱을 다시 빌드한다.
+
+### 다시 빌드
+```bash
+cd android && JAVA_HOME=~/.local/jdk17/Contents/Home ./gradlew assembleRelease && cp app/build/outputs/apk/release/app-release.apk ../SyncMemo.apk
+mac/build.sh && ditto "mac/build/싱크 메모.app" "/Applications/싱크 메모.app"
+```
+- 맥 빌드는 Xcode 없이 커맨드라인 도구로 한다. 커맨드라인 도구 16.x 의 SwiftBridging 중복 모듈 결함은 `build.sh` 가 vfsoverlay 로 우회한다(시스템 파일 수정 없음).
+- APK 는 이 맥의 디버그 키로 서명한다 → 구글 Android 클라이언트의 SHA-1 이 이 키다. 다른 맥에서 빌드하면 SHA-1 이 바뀐다.
+
+### 검증
+- `test/e2e.mjs` — 웹 31항목 (Chrome 두 대 + 가짜 드라이브)
+- `test/android.mjs` — 설치된 APK 의 WebView 에 붙어서 13항목 (보안 컨텍스트·저장 유지·공유받기·바로가기·뒤로가기·파일 저장·다크 모드)
+- 맥: `"/Applications/싱크 메모.app/Contents/MacOS/SyncMemo" --selftest=/tmp/r.json` (보안 컨텍스트·저장·암호화·HTTP 대행 + 창 스냅숏). *실제 앱 저장소에 검사용 메모가 생기니 검사 후 지울 것.*
+
+## 처음 설정 (1회) — 구글 클라우드
+console.cloud.google.com 에서 **한 프로젝트 안에**:
+1. 새 프로젝트 → "API 및 서비스 → 라이브러리" → **Google Drive API 사용**
+2. "Google 인증 플랫폼" → 브랜딩(앱 이름·이메일) → 데이터 액세스에 `.../auth/drive.appdata` 추가
+   → 대상(Audience)에서 **앱 게시(프로덕션)**. *테스트 상태로 두면 7일마다 로그인이 풀린다.*
+3. "클라이언트 → 클라이언트 만들기" 를 쓰는 앱마다:
+   - **Android** — 패키지 `net.live1379.syncmemo`, SHA-1 `AE:C1:15:57:FA:9B:64:6C:BA:6C:88:26:62:15:61:45:AA:8B:70:2B`
+     → 폰 앱은 ID 입력 없이 설정 → **구글 연결** → 계정 선택이면 끝.
+   - **데스크톱 앱** — 만든 뒤 ID·보안 비밀번호를 맥 앱 설정(⌘,)에 붙여넣고 **구글 연결** → 기본 브라우저에서 허용.
+   - (웹 버전도 쓸 때만) **웹 애플리케이션** — JS 원본 `https://live1379-dev.github.io`, 리디렉션 URI `https://live1379-dev.github.io/sync-memo/`
+4. "확인되지 않은 앱" 경고가 나오면 고급 → 이동 (내 프로젝트라 괜찮다).
+
+보안 비밀번호는 저장소(공개)에 넣지 않는다 — 맥은 `~/Library/Application Support/SyncMemo/auth.json`(600)에 refresh token 만, 폰은 구글 Play 서비스가 관리.
 
 ## 맥 메모 옮기기
 ```bash
@@ -53,5 +72,6 @@ osascript -l JavaScript tools/export-apple-notes.js ~/Desktop/맥메모.json
 잠긴 맥 메모는 읽을 수 없어 건너뛴다(먼저 잠금 해제).
 
 ## 업데이트 로그
+- v1.1.0 (2026-11-05) — **안드로이드 네이티브 앱(APK)·맥 네이티브 앱** 추가. 화면 내장 + 네이티브 로그인·파일·마이크·공유·인쇄·다크 모드. 편집 중 공유받기 순서 버그 수정, 안드로이드 다크 모드 연동. 웹 31/31 · 안드로이드 13/13 · 맥 자가검사 통과.
 - v1.0.1 (2026-11-04) — 구글 설정 전에는 "이 기기에만 저장 중" 으로 표시. GitHub Pages(live1379-dev) 배포.
 - v1.0.0 (2026-11-04) — 첫 버전. E2E 31/31 통과(두 기기 동기화·오프라인 편집·동시 수정 충돌 사본·잠금 암호화·폴더·휴지통·토큰 갱신·로그인 교환·오프라인 재실행).

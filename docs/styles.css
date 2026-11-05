@@ -31,7 +31,16 @@
   color-scheme: dark;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* 앱처럼: 화면 튕김·글자 확대·메뉴 글자 선택 없앰 */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { overscroll-behavior: none; }
+#side, .list-head, .edit-head, #toolbar, .card, #menu, .draw-bar, #fab, .side-sec, #syncBox { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.card .s, .card .t { pointer-events: none; }
+/* 맥 앱: 화면이 제목 표시줄까지 이어진다 — 창 버튼(신호등)·끌기 영역 28px 비움 */
+.native-mac #side { padding-top: 40px; }
+.native-mac .list-head { padding-top: 34px; }
+.native-mac .edit-head { padding-top: 32px; }
 html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font); -webkit-font-smoothing: antialiased; overflow: hidden; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }

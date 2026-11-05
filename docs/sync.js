@@ -16,10 +16,28 @@ const Sync = (() => {
   const redirectUri = () => new URL('./', location.href).href;
 
   async function cfg() { return (await DB.getMeta('gcfg')) || {}; }
-  async function auth() { return (await DB.getMeta('gauth')) || null; }
+  async function auth() {
+    if (Native.available) return (await Native.call('auth.status')).connected ? { native: true } : null;
+    return (await DB.getMeta('gauth')) || null;
+  }
+  // 맥 앱은 WebView 출처가 구글 CORS 밖이라 HTTP 를 네이티브가 대신 보낸다
+  async function xfetch(url, opts = {}) {
+    if (Native.platform !== 'mac') return fetch(url, opts);
+    let body = opts.body;
+    if (body instanceof Blob) body = await body.text();
+    const r = await Native.call('http', { url, method: opts.method || 'GET', headers: opts.headers || {}, body: body ?? null });
+    return new Response(r.status === 204 || r.status === 205 ? null : r.body, { status: r.status });
+  }
 
   async function login() {
     const c = await cfg();
+    if (Native.available) {
+      if (Native.platform === 'mac' && !c.clientId) throw new Error('설정에서 데스크톱 클라이언트 ID를 먼저 넣어주세요');
+      await Native.call('auth.login', c);
+      emit({ status: 'idle', error: '' });
+      run();
+      return;
+    }
     if (!c.clientId) throw new Error('설정에서 클라이언트 ID를 먼저 넣어주세요');
     const verifier = rand(48);
     const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
@@ -34,6 +52,7 @@ const Sync = (() => {
 
   // 구글에서 돌아왔을 때 (?code=...) 토큰 교환
   async function handleRedirect() {
+    if (Native.available) return false;
     const u = new URL(location.href);
     const code = u.searchParams.get('code'), st = u.searchParams.get('state'), err = u.searchParams.get('error');
     if (!code && !err) return false;
@@ -59,6 +78,10 @@ const Sync = (() => {
   }
 
   async function token(force) {
+    if (Native.available) {
+      try { return (await Native.call('auth.token', { ...(await cfg()), force: !!force })).token; }
+      catch (e) { if (e.code === 'login') throw Object.assign(new Error('구글 연결 필요'), { code: 'login' }); throw e; }
+    }
     const a = await auth();
     if (!a) throw Object.assign(new Error('구글 연결 필요'), { code: 'login' });
     if (!force && a.access && a.exp - 60000 > Date.now()) return a.access;
@@ -78,7 +101,7 @@ const Sync = (() => {
 
   async function api(url, opts = {}, retry = true) {
     const t = await token();
-    const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + t } });
+    const r = await xfetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + t } });
     if (r.status === 401 && retry) { await token(true); return api(url, opts, false); }
     if (!r.ok) throw new Error(`드라이브 오류 ${r.status}`);
     return r;
@@ -127,7 +150,7 @@ const Sync = (() => {
   // 한 번 동기화: 1) 원격의 새 버전 받기(갈라졌으면 사본) 2) 이 기기 변경 올리기 3) 반영 끝난 옛 버전 지우기
   async function runOnce() {
     if (!navigator.onLine) { emit({ status: 'offline' }); return; }
-    if (!(await auth())) { emit({ status: (await cfg()).clientId ? 'login' : 'nosetup' }); return; }
+    if (!(await auth())) { emit({ status: needsSetup(await cfg()) ? 'nosetup' : 'login' }); return; }
     emit({ status: 'syncing', error: '' });
     let changed = false;
     const byKey = new Map(), garbage = new Set();
@@ -206,7 +229,7 @@ const Sync = (() => {
   async function init() {
     emit({ lastSync: (await DB.getMeta('lastSync')) || 0 });
     await handleRedirect().catch(e => emit({ status: 'error', error: e.message }));
-    if (!(await auth())) emit({ status: (await cfg()).clientId ? 'login' : 'nosetup' });
+    if (!(await auth())) emit({ status: needsSetup(await cfg()) ? 'nosetup' : 'login' });
     addEventListener('online', () => run());
     addEventListener('offline', () => emit({ status: 'offline' }));
     document.addEventListener('visibilitychange', () => { if (!document.hidden) run(); });
@@ -214,7 +237,9 @@ const Sync = (() => {
     run();
   }
 
-  async function logout() { await DB.delMeta('gauth'); emit({ status: 'login' }); }
+  // 안드로이드 앱은 구글 계정만 고르면 되고(클라이언트 ID 불필요), 맥 앱·웹은 클라이언트 ID 가 있어야 한다
+  const needsSetup = c => Native.platform !== 'android' && !c.clientId;
+  async function logout() { if (Native.available) await Native.call('auth.logout'); else await DB.delMeta('gauth'); emit({ status: 'login' }); }
 
   return { init, run, soon, login, logout, cfg, auth, on: f => { listeners.add(f); f(state); }, get state() { return state; } };
 })();

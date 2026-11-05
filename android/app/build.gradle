@@ -1,0 +1,30 @@
+plugins { id "com.android.application" }
+android {
+    namespace "net.live1379.syncmemo"
+    compileSdk 35
+    defaultConfig {
+        applicationId "net.live1379.syncmemo"
+        minSdk 29
+        targetSdk 34
+        versionCode 1
+        versionName "1.1.0"
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug   // 사이드로드용: 이 맥의 디버그 키로 서명 (구글 Android 클라이언트 SHA-1 도 이 키)
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    sourceSets { main { assets.srcDirs += "$buildDir/webassets" } }
+}
+// 웹 화면(docs/)을 앱 안에 복사해 넣는다 — 인터넷 없이 실행
+tasks.register("copyWeb", Copy) {
+    from("$rootDir/../docs") { exclude "sw.js" }
+    into("$buildDir/webassets/www")
+}
+preBuild.dependsOn copyWeb
+dependencies {
+    implementation "androidx.webkit:webkit:1.12.1"
+    implementation "com.google.android.gms:play-services-auth:21.3.0"
+}

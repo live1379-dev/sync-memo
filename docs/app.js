@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.0.1';
+  const VERSION = '1.1.0';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -648,7 +648,7 @@ const App = (() => {
       n.locked && lockPw && { label: '지금 모두 잠그기', act: lockAll },
       open && { label: '복제', act: () => duplicate(n) },
       open && { label: '마크다운으로 저장', act: () => download(fileName(n) + '.md', htmlToMd(editor.innerHTML), 'text/markdown') },
-      open && { label: '인쇄 / PDF', act: () => print() },
+      open && { label: '인쇄 / PDF', act: () => (Native.available ? Native.call('print') : print()) },
       { label: '정보', act: () => infoDialog(n) },
       'hr',
       { label: '삭제', danger: true, act: () => trash(n) },
@@ -964,6 +964,7 @@ const App = (() => {
   }
   const fileName = n => (n.title || '메모').replace(/[\\/:*?"<>|]/g, '').slice(0, 60);
   function download(name, content, type) {
+    if (Native.available) { Native.call('saveFile', { name, text: content, mime: type }).then(r => r?.path && toast('저장했어요 — ' + r.path)).catch(e => toast('저장 실패: ' + e.message)); return; }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([content], { type }));
     a.download = name; a.click();
@@ -1012,6 +1013,7 @@ const App = (() => {
     const n = cur(); if (!n) return;
     await saveNow();
     const text = editor.innerText;
+    if (Native.available) { Native.call('share', { title: n.title || '메모', text }).catch(() => {}); return; }
     if (navigator.share) { try { await navigator.share({ title: n.title || '메모', text }); } catch {} }
     else { await navigator.clipboard.writeText(text); toast('텍스트를 복사했어요'); }
   }
@@ -1024,13 +1026,16 @@ const App = (() => {
     const redirect = new URL('./', location.href).href;
     openModal(`<h3>설정</h3>
       <p><b>구글 드라이브 동기화</b> — 메모는 각 기기에 먼저 저장되고, 인터넷이 되면 내 드라이브의 앱 전용 숨김 폴더와 맞춰집니다.</p>
-      <div class="opt"><span>상태</span><span>${a ? '연결됨 ✓' : c.clientId ? '연결 필요' : '설정 필요'}</span></div>
-      <label>OAuth 클라이언트 ID</label><input type="text" id="sCid" value="${esc(c.clientId || '')}" placeholder="....apps.googleusercontent.com">
+      <div class="opt"><span>상태</span><span>${a ? '연결됨 ✓' : c.clientId || Native.platform === 'android' ? '연결 필요' : '설정 필요'}</span></div>
+      <div ${Native.platform === 'android' ? 'hidden' : ''}>
+      <label>${Native.platform === 'mac' ? '데스크톱 앱' : '웹'} OAuth 클라이언트 ID</label><input type="text" id="sCid" value="${esc(c.clientId || '')}" placeholder="....apps.googleusercontent.com">
       <label>클라이언트 보안 비밀번호</label><input type="password" id="sSec" value="${esc(c.clientSecret || '')}" placeholder="GOCSPX-...">
-      <p style="font-size:12px">승인된 리디렉션 URI로 등록할 주소: <code>${esc(redirect)}</code></p>
+      ${Native.available ? '' : `<p style="font-size:12px">승인된 리디렉션 URI로 등록할 주소: <code>${esc(redirect)}</code></p>`}
+      </div>
+      ${Native.platform === 'android' ? '<p>구글 계정을 한 번 고르면 계속 연결됩니다.</p>' : ''}
       <div class="acts" style="justify-content:flex-start">
         ${a ? '<button data-sync>지금 동기화</button><button data-out>연결 해제</button>' : '<button class="primary" data-in>구글 연결</button>'}
-        ${c.clientId ? '<button data-link>다른 기기 연결 링크 복사</button>' : ''}
+        ${c.clientId && !Native.available ? '<button data-link>다른 기기 연결 링크 복사</button>' : ''}
       </div>
       <label style="margin-top:20px">사용</label>
       <div class="opt"><span>체크한 항목을 맨 아래로</span><button data-chk>${prefs.checkedToBottom ? '켜짐' : '꺼짐'}</button></div>
@@ -1039,7 +1044,7 @@ const App = (() => {
       <div class="opt"><span>모든 메모를 파일로 저장</span><button data-exp>내보내기</button></div>
       <div class="opt"><span>백업·맥 메모 가져오기 (.json)</span><button data-imp>가져오기</button></div>
       <div class="opt"><span>이 기기 저장 공간</span><span>${est ? (est.usage / 1048576).toFixed(1) + 'MB 사용' : '-'}${persisted ? ' · 보호됨' : ''}</span></div>
-      <p style="font-size:12px;margin-top:14px">싱크 메모 v${VERSION}</p>
+      <p style="font-size:12px;margin-top:14px">싱크 메모 v${VERSION}${Native.available ? ' · ' + (Native.platform === 'mac' ? '맥 앱' : '안드로이드 앱') : ''}</p>
       <div class="acts"><button class="primary" data-x>닫기</button></div>`, (s, close) => {
       const saveCfg = async () => { const n = { clientId: s.querySelector('#sCid').value.trim(), clientSecret: s.querySelector('#sSec').value.trim() }; await DB.setMeta('gcfg', n); return n; };
       s.querySelector('[data-x]').onclick = async () => { await saveCfg(); close(); Sync.run(); };
@@ -1058,7 +1063,17 @@ const App = (() => {
     });
   }
   function savePrefs() { try { localStorage.setItem('sm_prefs', JSON.stringify(prefs)); } catch {} }
-  function applyTheme() { prefs.theme === 'auto' ? document.documentElement.removeAttribute('data-theme') : (document.documentElement.dataset.theme = prefs.theme); }
+  // 안드로이드 WebView 는 시스템 다크 모드를 화면에 넘겨주지 않아서 네이티브가 알려준다 (sysDark). 상태·내비게이션 바 색도 맞춘다.
+  let sysDark = null;
+  function applyTheme() {
+    const root = document.documentElement;
+    const autoDark = sysDark ?? matchMedia('(prefers-color-scheme: dark)').matches;
+    const dark = prefs.theme === 'dark' || (prefs.theme === 'auto' && autoDark);
+    if (prefs.theme === 'auto' && sysDark === null) root.removeAttribute('data-theme');
+    else root.dataset.theme = dark ? 'dark' : 'light';
+    if (Native.platform === 'android') Native.call('bars', { dark }).catch(() => {});
+  }
+  function setSysDark(v) { sysDark = !!v; applyTheme(); }
 
   // ───────── 동기화 표시 ─────────
   function renderSync(st) {
@@ -1119,9 +1134,13 @@ const App = (() => {
     };
     $('#btnToSide').onclick = () => { history.pushState({ pane: 'side' }, ''); app.dataset.pane = 'side'; };
     $('#btnToList').onclick = () => { if (history.state?.pane === 'edit') history.back(); else { app.dataset.pane = 'list'; leaveNote().then(() => { renderList(); renderSide(); }); } };
-    addEventListener('popstate', async e => {
+    addEventListener('popstate', e => {
       const p = e.state?.pane || 'list';
-      if (app.dataset.pane === 'edit' && p !== 'edit') { await leaveNote(); curId = null; renderEditor(); renderList(); renderSide(); }
+      if (app.dataset.pane === 'edit' && p !== 'edit') {
+        // 동기적으로 닫는다 — 뒤에 이어서 다른 메모를 여는 동작(공유받기 등)과 순서가 꼬이지 않게
+        const leaving = leaveNote(); curId = null; renderEditor(); renderList();
+        leaving.then(() => { renderList(); renderSide(); });
+      }
       closeMenu(); if (!modalEl.hidden) { modalEl.hidden = true; modalEl.onclose && modalEl.onclose(); }
       app.dataset.pane = p;
     });
@@ -1155,14 +1174,14 @@ const App = (() => {
       if (a) {
         e.preventDefault();
         if (a.dataset.note) { const n = recs.get('note-' + a.dataset.note); n && !n.purged ? openNote(n.id) : toast('연결된 메모가 없어요'); }
-        else if (a.href) openMenu(a, [{ label: '링크 열기', act: () => open(a.href, '_blank', 'noopener') }, { label: '링크 지우기', act: () => { a.replaceWith(...a.childNodes); scheduleSave(); } }]);
+        else if (a.href) openMenu(a, [{ label: '링크 열기', act: () => (Native.available ? Native.call('openExternal', { url: a.href }) : open(a.href, '_blank', 'noopener')) }, { label: '링크 지우기', act: () => { a.replaceWith(...a.childNodes); scheduleSave(); } }]);
         return;
       }
       const img = e.target.closest('img');
       if (img && editor.isContentEditable) {
         openMenu(img, [
           img.classList.contains('drawing') && { label: '그림 편집', act: () => Draw.open(img) },
-          { label: '새 창에서 보기', act: () => { const w = open(); w && (w.document.body.innerHTML = `<img src="${img.src}" style="max-width:100%">`); } },
+          { label: '크게 보기', act: () => openModal(`<img src="${img.src}" alt="" style="width:100%;border-radius:10px;background:#fff"><div class="acts"><button class="primary" data-x>닫기</button></div>`, (s, close) => s.querySelector('[data-x]').onclick = close) },
           { label: '삭제', danger: true, act: () => { img.remove(); scheduleSave(); } },
         ]);
       }
@@ -1241,16 +1260,23 @@ const App = (() => {
       try { const c = JSON.parse(decodeURIComponent(escape(atob(h[1])))); await DB.setMeta('gcfg', c); toast('동기화 설정을 받았어요 — 설정에서 "구글 연결"을 누르세요', 5000); } catch { toast('설정 링크가 올바르지 않아요'); }
       history.replaceState(null, '', location.pathname);
     }
-    const shared = ['title', 'text', 'url'].some(k => u.searchParams.has(k));
-    if (u.searchParams.has('new') || shared) {
-      const t = TEMPLATES.find(x => x.name === u.searchParams.get('new'));
-      history.replaceState(null, '', location.pathname);
-      if (shared) {
-        const title = u.searchParams.get('title') || '', text = u.searchParams.get('text') || '', link = u.searchParams.get('url') || '';
-        const body = (text + (link && !text.includes(link) ? '\n' + link : '')).split('\n').map(l => `<p>${/^https?:\/\/\S+$/.test(l.trim()) ? `<a href="${esc(l.trim())}">${esc(l.trim())}</a>` : esc(l) || '<br>'}</p>`).join('');
-        const rec = newNoteRec(`<h1>${esc(title || '공유받은 메모')}</h1>${body}`);
-        await persist(rec); await openNote(rec.id); renderSide();
-      } else await newNote(t ? t.html() : undefined);
+    if (['new', 'title', 'text', 'url'].some(k => u.searchParams.has(k))) { history.replaceState(history.state, '', location.pathname); await launch(u.searchParams); }
+  }
+  // 새 메모·공유받기 — 주소(?new= / ?text=) 또는 네이티브 앱(이미 열린 상태)에서 호출
+  async function launch(params) {
+    if (typeof params === 'string') params = new URLSearchParams(params);
+    const shared = ['title', 'text', 'url'].some(k => params.has(k));
+    if (!params.has('new') && !shared) return;
+    if (isMobile() && app.dataset.pane === 'edit') await new Promise(r => { addEventListener('popstate', () => r(), { once: true }); history.back(); });
+    if (shared) {
+      const title = params.get('title') || '', text = params.get('text') || '', link = params.get('url') || '';
+      const body = (text + (link && !text.includes(link) ? '\n' + link : '')).split('\n').map(l => `<p>${/^https?:\/\/\S+$/.test(l.trim()) ? `<a href="${esc(l.trim())}">${esc(l.trim())}</a>` : esc(l) || '<br>'}</p>`).join('');
+      const rec = newNoteRec(`<h1>${esc(title || '공유받은 메모')}</h1>${body}`);
+      recs.set(rec.key, rec);
+      await persist(rec); await openNote(rec.id); renderSide();
+    } else {
+      const t = TEMPLATES.find(x => x.name === params.get('new'));
+      await newNote(t ? t.html() : undefined);
     }
   }
 
@@ -1261,6 +1287,7 @@ const App = (() => {
 
   async function init() {
     try { Object.assign(prefs, JSON.parse(localStorage.getItem('sm_prefs') || '{}')); } catch {}
+    if (Native.platform === 'android') { try { sysDark = !!(await Native.call('sysDark')); } catch {} }
     applyTheme();
     document.execCommand('defaultParagraphSeparator', false, 'p');
     history.replaceState({ pane: 'list' }, '');
@@ -1274,10 +1301,10 @@ const App = (() => {
     await handleLaunchParams();
     Sync.init();
     navigator.storage?.persist?.().catch(() => {});
-    if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+    if ('serviceWorker' in navigator && !Native.available && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
     setInterval(() => renderSync(Sync.state), 30000);
   }
 
-  return { init, uid, onRemoteChange, _test: { recs: () => recs, htmlToMd, sanitize, importData, saveNow, lockAll } };
+  return { init, uid, onRemoteChange, launch, setSysDark, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, importData, saveNow, lockAll } };
 })();
 App.init();
