@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.3.2';
+  const VERSION = '1.3.3';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1179,14 +1179,24 @@ const App = (() => {
       const files = await Native.call('inbox.take');
       if (!files?.length) return;
       const link = s => esc(s).replace(/https?:\/\/[^\s<>"']+/g, u => `<a href="${u}">${u}</a>`);
-      const notes = files.map(f => {
+      const adds = [];
+      let upd = 0;
+      for (const f of files) {
         const lines = String(f.text).replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
         if (lines[0].trim() !== f.name.trim()) lines.unshift(f.name);   // 첫 줄 = 메모 제목
-        return { id: uid(), html: lines.map(l => `<p>${l.trim() ? link(l) : '<br>'}</p>`).join(''),
-                 folderName: f.folder || undefined, createdAt: f.mtime, updatedAt: f.mtime };
-      });
-      const n = await importData({ notes });
-      if (n) toast?.(`받은 메모 ${n}개`);
+        const html = lines.map(l => `<p>${l.trim() ? link(l) : '<br>'}</p>`).join('');
+        // 같은 폴더에 같은 제목 메모가 있으면 그 메모를 고쳐 쓴다(정정본 — 중복 메모를 만들지 않음)
+        const fid = f.folder ? folders().find(x => x.name === f.folder)?.id || null : null;
+        const ex = notes().find(n => !n.trashedAt && !n.locked && (n.folderId || null) === fid && (n.title || '').trim() === lines[0].trim());
+        if (ex && (!f.folder || fid)) {
+          if (ex.id === curId) await saveNow();
+          ex.html = html; derive(ex); await persist(ex); upd++;
+          if (ex.id === curId) renderEditor();
+        } else adds.push({ id: uid(), html, folderName: f.folder || undefined, createdAt: f.mtime, updatedAt: f.mtime });
+      }
+      const n = adds.length ? await importData({ notes: adds }) : 0;
+      if (upd) renderList();
+      if (n || upd) toast(`받은 메모 ${n ? `새 ${n}개` : ''}${n && upd ? ' · ' : ''}${upd ? `고침 ${upd}개` : ''}`);
     } catch (e) { console.warn('inbox', e); }
     finally { inboxBusy = false; }
   }
