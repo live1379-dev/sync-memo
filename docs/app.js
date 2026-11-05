@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.3.1';
+  const VERSION = '1.3.2';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1169,6 +1169,28 @@ const App = (() => {
     return added;
   }
 
+  // ───────── 받은 txt (맥) ─────────
+  // ~/Library/Application Support/SyncMemo/inbox/[폴더/]제목.txt → 메모 (오너 2026-11-05 "링크는 싱크 메모에 txt로")
+  let inboxBusy = false;
+  async function pullInbox() {
+    if (Native.platform !== 'mac' || SINGLE || inboxBusy) return;
+    inboxBusy = true;
+    try {
+      const files = await Native.call('inbox.take');
+      if (!files?.length) return;
+      const link = s => esc(s).replace(/https?:\/\/[^\s<>"']+/g, u => `<a href="${u}">${u}</a>`);
+      const notes = files.map(f => {
+        const lines = String(f.text).replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
+        if (lines[0].trim() !== f.name.trim()) lines.unshift(f.name);   // 첫 줄 = 메모 제목
+        return { id: uid(), html: lines.map(l => `<p>${l.trim() ? link(l) : '<br>'}</p>`).join(''),
+                 folderName: f.folder || undefined, createdAt: f.mtime, updatedAt: f.mtime };
+      });
+      const n = await importData({ notes });
+      if (n) toast?.(`받은 메모 ${n}개`);
+    } catch (e) { console.warn('inbox', e); }
+    finally { inboxBusy = false; }
+  }
+
   const openExt = url => (Native.available ? Native.call('openExternal', { url }) : open(url, '_blank', 'noopener'));
 
   // ───────── 공유 ─────────
@@ -1559,6 +1581,7 @@ const App = (() => {
     navigator.storage?.persist?.().catch(() => {});
     if ('serviceWorker' in navigator && !Native.available && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
     setInterval(() => renderSync(Sync.state), 30000);
+    if (Native.platform === 'mac') { pullInbox(); setInterval(pullInbox, 15000); addEventListener('focus', pullInbox); }
   }
 
   return { init, uid, onRemoteChange, launch, setSysDark, toggleSide, fmt, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, importData, saveNow, lockAll } };

@@ -399,8 +399,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         case "openExternal":
             if let u = URL(string: a["url"] as? String ?? "") { NSWorkspace.shared.open(u) }
             reply(wv, id, true, nil)
+        case "inbox.take": reply(wv, id, true, selftest != nil ? [] : takeInbox())
         default: reply(wv, id, false, "알 수 없는 요청 \(method)")
         }
+    }
+
+    /// 받은 txt → 메모 (오너 2026-11-05). ~/Library/Application Support/SyncMemo/inbox/[폴더/]제목.txt
+    /// 읽은 파일은 inbox/가져옴/ 으로 옮긴다(지우지 않음). 하위 폴더 이름 = 메모 폴더 이름.
+    func takeInbox() -> [[String: Any]] {
+        let fm = FileManager.default
+        let root = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/SyncMemo/inbox")
+        let done = root.appendingPathComponent("가져옴")
+        try? fm.createDirectory(at: done, withIntermediateDirectories: true)
+        var out: [[String: Any]] = []
+        guard let en = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { return out }
+        for case let u as URL in en {
+            if u.path.hasPrefix(done.path) { en.skipDescendants(); continue }
+            guard u.pathExtension.lowercased() == "txt", let text = try? String(contentsOf: u, encoding: .utf8) else { continue }
+            let rel = u.deletingLastPathComponent().path.dropFirst(root.path.count).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let t = (try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
+            var dst = done.appendingPathComponent(u.lastPathComponent), i = 2
+            while fm.fileExists(atPath: dst.path) { dst = done.appendingPathComponent("\(u.deletingPathExtension().lastPathComponent)_\(i).txt"); i += 1 }
+            guard (try? fm.moveItem(at: u, to: dst)) != nil else { continue }   // 못 옮기면 다음에 다시(중복 방지)
+            out.append(["name": u.deletingPathExtension().lastPathComponent, "folder": rel, "text": text, "mtime": t.timeIntervalSince1970 * 1000])
+        }
+        return out
     }
 
     /// 구글 API 호출 대행 (내장 화면의 syncmemo:// 출처는 구글 CORS 밖이라)
