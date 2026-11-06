@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.3.5';
+  const VERSION = '1.3.6';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -211,6 +211,10 @@ const App = (() => {
 
   // ───────── 목록 ─────────
   const sortField = () => (prefs.sort === 'created' ? 'createdAt' : 'updatedAt');
+  // 목록·날짜에 보이는 '수정한 날' = 글을 고친 시각(editedAt). updatedAt 은 동기화 버전이라 고정·이동에도 올라간다.
+  // 가져온 메모는 원래 수정 시각을 editedAt 에 둔다(오너 2026-11-06 "다 지금 시간으로 잡혀서 뒤죽박죽")
+  const edited = n => n.editedAt || n.updatedAt;
+  const sortVal = n => (sortField() === 'createdAt' ? n.createdAt : edited(n)) || n.updatedAt;
   function filtered() {
     let arr = notes();
     if (view.type === 'trash') arr = arr.filter(n => n.trashedAt);
@@ -230,7 +234,7 @@ const App = (() => {
     arr.sort((a, b) => {
       if (view.type !== 'trash' && !!b.pinned - !!a.pinned) return !!b.pinned - !!a.pinned;
       if (prefs.sort === 'title') return (a.title || '').localeCompare(b.title || '', 'ko');
-      return (b[f] || 0) - (a[f] || 0);
+      return (sortVal(b) || 0) - (sortVal(a) || 0);
     });
     return arr;
   }
@@ -280,7 +284,7 @@ const App = (() => {
     for (const n of arr) {
       let g = '';
       if (n.pinned && view.type !== 'trash') g = '고정됨';
-      else if (prefs.sort !== 'title') g = groupOf(n[f] || n.updatedAt);
+      else if (prefs.sort !== 'title') g = groupOf(sortVal(n));
       else g = prefs.layout === 'grid' ? '' : '메모';
       if (g && g !== lastG) { html += `<div class="grp">${g}</div>`; lastG = g; }
       const fo = n.folderId && view.type !== 'folder' ? recs.get('folder-' + n.folderId) : null;
@@ -288,7 +292,7 @@ const App = (() => {
       html += `<a class="card${n.id === curId ? ' on' : ''}${th ? ' has-thumb' : ''}" data-id="${n.id}"${n.color ? ` data-color="${n.color}"` : ''}>`
         + (th ? `<img class="thumb" src="${th}" alt="" loading="lazy">` : '')
         + `<div class="t">${n.locked ? ICON.lock : ''}${hilite(n.title || '새 메모')}</div>`
-        + `<div class="s"><time>${view.type === 'trash' ? Math.max(0, TRASH_DAYS - Math.floor((Date.now() - n.trashedAt) / DAY)) + '일 남음' : fmtShort(n[f] || n.updatedAt)}</time>${hilite(snippetOf(n))}</div>`
+        + `<div class="s"><time>${view.type === 'trash' ? Math.max(0, TRASH_DAYS - Math.floor((Date.now() - n.trashedAt) / DAY)) + '일 남음' : fmtShort(sortVal(n))}</time>${hilite(snippetOf(n))}</div>`
         + `<div class="meta">${fo && !fo.deleted ? `<span class="fold"><i style="background:${COLORS[fo.color] || COLORS.gray}"></i>${esc(fo.name)}</span>` : ''}${n.chk ? `<span class="${n.chk[0] === n.chk[1] ? 'chk' : ''}">☑ ${n.chk[0]}/${n.chk[1]}</span>` : ''}${(n.tags || []).slice(0, 3).map(t => '#' + esc(t)).join(' ')}</div>`
         + `</a>`;
     }
@@ -315,7 +319,7 @@ const App = (() => {
     if (!n) { editor.innerHTML = ''; $('#edit').removeAttribute('data-color'); return; }
     n.color ? ($('#edit').dataset.color = n.color) : $('#edit').removeAttribute('data-color');
     $('#btnPin').classList.toggle('on', !!n.pinned);
-    $('#editMeta').textContent = fmtLong(n.updatedAt);
+    $('#editMeta').textContent = fmtLong(edited(n));
     const trashed = !!n.trashedAt;
     if (n.locked && !unlocked.has(n.id)) {
       $('#edit').classList.add('locked');
@@ -356,9 +360,10 @@ const App = (() => {
       touchLock();
     } else n.html = html;
     derive(n, text);
+    n.editedAt = Date.now();
     await persist(n);
     loadedVer = n.updatedAt;
-    $('#editMeta').textContent = fmtLong(n.updatedAt);
+    $('#editMeta').textContent = fmtLong(edited(n));
     renderList(); renderSide();
   }
   const isBlank = n => !n.locked && !n.hasMedia && !(n.text || '').trim();
@@ -843,7 +848,7 @@ const App = (() => {
       <div class="opt"><span>단어</span><b>${words.toLocaleString()}</b></div>
       <div class="opt"><span>폴더</span><span>${fo ? esc(fo.name) : '없음'}</span></div>
       <div class="opt"><span>만든 날</span><span>${fmtLong(n.createdAt)}</span></div>
-      <div class="opt"><span>수정한 날</span><span>${fmtLong(n.updatedAt)}</span></div>
+      <div class="opt"><span>수정한 날</span><span>${fmtLong(edited(n))}</span></div>
       <div class="opt"><span>동기화</span><span>${n._dirty ? "올릴 변경 있음" : n._base ? '드라이브와 같음' : '아직 안 올림'}</span></div>
       <div class="acts"><button class="primary" data-x>닫기</button></div>`, (s, close) => s.querySelector('[data-x]').onclick = close);
   }
@@ -942,7 +947,7 @@ const App = (() => {
 
   // ───────── 메모 연결 ─────────
   function linkDialog() {
-    const list = notes().filter(n => !n.trashedAt && n.id !== curId).sort((a, b) => b.updatedAt - a.updatedAt);
+    const list = notes().filter(n => !n.trashedAt && n.id !== curId).sort((a, b) => edited(b) - edited(a));
     openModal(`<h3>다른 메모 연결</h3><input type="search" placeholder="메모 제목 검색"><div class="pick"></div><div class="acts"><button data-x>취소</button></div>`, (s, close) => {
       const inp = s.querySelector('input'), pick = s.querySelector('.pick');
       const draw = () => {
@@ -1151,14 +1156,18 @@ const App = (() => {
       if (n.purged) continue;
       const id = n.id || uid();
       const ex = recs.get('note-' + id);
-      if (ex && !ex.purged && ex.updatedAt >= (n.updatedAt || 0)) continue;
+      if (ex && !ex.purged && ex.updatedAt >= (n.updatedAt || 0)) {
+        // 예전 판으로 가져와 날짜가 가져온 시각으로 찍힌 메모 → 원래 수정 시각만 되살린다(같은 메모 = 만든 시각이 같고 아직 안 고친 것)
+        if (!ex.editedAt && n.updatedAt && n.createdAt && ex.createdAt === n.createdAt) { ex.editedAt = n.editedAt || n.updatedAt; await persist(ex); added++; }
+        continue;
+      }
       let folderId = n.folderId ? fmap.get(n.folderId) || (recs.get('folder-' + n.folderId) ? n.folderId : null) : null;
       if (!folderId && n.folderName) {
         let f = byName.get(n.folderName);
         if (!f) { f = { kind: 'folder', id: uid(), name: n.folderName, color: 'yellow', order: folders().length, createdAt: Date.now() }; f.key = 'folder-' + f.id; await persist(f); byName.set(f.name, f); }
         folderId = f.id;
       }
-      const rec = { ...n, key: 'note-' + id, kind: 'note', id, folderId, html: n.locked ? '' : sanitize(n.html || ''), createdAt: n.createdAt || Date.now(), updatedAt: n.updatedAt || Date.now(), _fileId: ex?._fileId, _base: ex?._base };
+      const rec = { ...n, key: 'note-' + id, kind: 'note', id, folderId, html: n.locked ? '' : sanitize(n.html || ''), createdAt: n.createdAt || Date.now(), updatedAt: n.updatedAt || Date.now(), editedAt: n.editedAt || n.updatedAt || Date.now(), _fileId: ex?._fileId, _base: ex?._base };
       delete rec.folderName;
       derive(rec);
       if (n.locked) rec.title = n.title;
@@ -1195,7 +1204,7 @@ const App = (() => {
         const ex = (oldT && same(oldT)) || same(lines[0]);
         if (ex && (!f.folder || fid)) {
           if (ex.id === curId) await saveNow();
-          ex.html = html; derive(ex); await persist(ex); upd++;
+          ex.html = html; derive(ex); ex.editedAt = Date.now(); await persist(ex); upd++;
           if (ex.id === curId) renderEditor();
         } else adds.push({ id: uid(), html, folderName: f.folder || undefined, createdAt: f.mtime, updatedAt: f.mtime });
       }

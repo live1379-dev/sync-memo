@@ -377,6 +377,33 @@ try {
   const a = await up.evaluate(() => [...App._test.recs().values()].find(n => n.kind === 'note' && (n.title || '').includes('되돌리기A'))?.html || '');
   check('다른 메모의 되돌리기가 앞 메모를 건드리지 않음', a.includes('지울글'));
   await U.close();
+
+  // 18. 가져온 메모는 원래 수정 날짜로 정렬·표시 (2026-11-06)
+  const I = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const ip = await I.newPage();
+  ip.on('pageerror', e => errors.push('I: ' + e.message));
+  await ip.goto(BASE); await ip.waitForTimeout(300);
+  const OLD = Date.UTC(2023, 0, 15, 3), OLD2 = Date.UTC(2024, 4, 27, 3);
+  const imp = notes => ip.evaluate(d => App._test.importData(d), { format: 'apple-notes-export', folders: [], notes });
+  await ip.evaluate(() => { document.querySelector('#fab').click(); });
+  await ip.keyboard.type('오늘메모'); await ip.evaluate(() => App._test.saveNow());
+  await imp([{ id: 'apple-a', html: '<p>옛날메모2023</p>', createdAt: OLD, updatedAt: OLD }, { id: 'apple-b', html: '<p>옛날메모2024</p>', createdAt: OLD2, updatedAt: OLD2 }]);
+  const listOrder = () => ip.evaluate(() => [...document.querySelectorAll('#notes .card .t')].map(x => x.textContent.trim()));
+  const o1 = await listOrder();
+  check('가져온 메모가 원래 날짜 순서(오늘 → 2024 → 2023)', o1.indexOf('오늘메모') < o1.indexOf('옛날메모2024') && o1.indexOf('옛날메모2024') < o1.indexOf('옛날메모2023'), o1.join(','));
+  check('목록 날짜가 원래 날짜(2023)로 표시', await ip.evaluate(() => [...document.querySelectorAll('#notes .card')].find(c => c.textContent.includes('옛날메모2023'))?.querySelector('time')?.textContent.startsWith('23. 1. 15')));
+  // 예전 판처럼 editedAt 없이 가져온 시각으로 찍힌 메모 → 같은 파일 다시 넣으면 날짜 복구
+  await ip.evaluate(async () => { const r = [...App._test.recs().values()].find(n => n.id === 'apple-a'); delete r.editedAt; r.updatedAt = Date.now(); });
+  const fixed = await imp([{ id: 'apple-a', html: '<p>옛날메모2023</p>', createdAt: OLD, updatedAt: OLD }]);
+  check('다시 가져오면 날짜만 복구(새 메모 안 생김)', fixed === 1 && await ip.evaluate(t => { const r = [...App._test.recs().values()].filter(n => n.kind === 'note' && (n.title || '').includes('옛날메모2023')); return r.length === 1 && r[0].editedAt === t; }, OLD));
+  // 고정은 날짜를 바꾸지 않고, 글을 고치면 바뀐다
+  await ip.evaluate(() => { const c = [...document.querySelectorAll('#notes .card')].find(c => c.textContent.includes('옛날메모2024')); c.click(); });
+  await ip.waitForTimeout(200);
+  await ip.evaluate(() => document.querySelector('#btnPin').click()); await ip.waitForTimeout(100);
+  check('고정해도 수정한 날은 그대로', await ip.evaluate(t => [...App._test.recs().values()].find(n => n.id === 'apple-b').editedAt === t, OLD2));
+  await ip.click('#editor'); await ip.keyboard.press('End'); await ip.keyboard.type(' 고침'); await ip.evaluate(() => App._test.saveNow());
+  check('글을 고치면 수정한 날이 지금으로', await ip.evaluate(() => Date.now() - [...App._test.recs().values()].find(n => n.id === 'apple-b').editedAt < 60000));
+  await I.close();
 } catch (e) {
   check('테스트 실행', false, e.stack);
 } finally {
