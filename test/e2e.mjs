@@ -342,8 +342,20 @@ try {
   check('오른쪽 스와이프 → 고정', await pinOf('제스처A') === true);
   await touch('제스처A', [20, 50]);
   check('짧게 밀면 아무 일 없음(열리지도 않음)', await pinOf('제스처A') === true && await gp.evaluate(() => document.querySelector('#app').dataset.pane !== 'edit'));
+  const trashedOf = t => gp.evaluate(t => !!([...App._test.recs().values()].find(n => n.kind === 'note' && (n.title || '').includes(t))?.trashedAt), t);
+  const tapAt = dxFromRight => gp.evaluate(async d => {
+    const c = document.querySelector('#notes .card.armed'); if (!c) return false;
+    const r = c.getBoundingClientRect(), x = d == null ? r.left + 30 : r.right + d, y = r.top + r.height / 2;
+    const ev = (type, t) => t.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 8, pointerType: 'touch', clientX: x, clientY: y }));
+    ev('pointerdown', c); ev('pointerup', window); c.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y }));
+    await new Promise(r => setTimeout(r, 300)); return true;
+  }, dxFromRight);
   await touch('제스처B', [-20, -60, -120, -160]);
-  check('왼쪽 스와이프 → 최근 삭제됨', await gp.evaluate(() => !!([...App._test.recs().values()].find(n => n.kind === 'note' && (n.title || '').includes('제스처B'))?.trashedAt)));
+  check('왼쪽 스와이프 → 바로 삭제 안 됨, 삭제 버튼만 드러남', !await trashedOf('제스처B') && await gp.evaluate(() => !!document.querySelector('#notes .card.armed')));
+  await tapAt(null);
+  check('버튼 밖을 누르면 닫히기만(삭제 안 됨, 열리지도 않음)', !await trashedOf('제스처B') && await gp.evaluate(() => !document.querySelector('#notes .card.armed') && document.querySelector('#app').dataset.pane !== 'edit'));
+  await touch('제스처B', [-20, -60, -120, -160]);
+  check('삭제 버튼 누름 → 최근 삭제됨', await tapAt(40) && await trashedOf('제스처B'));
   await G.close();
 
   // 17. 되돌리기·다시 실행 버튼

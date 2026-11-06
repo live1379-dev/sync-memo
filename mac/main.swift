@@ -406,6 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
 
     /// 받은 txt → 메모 (오너 2026-11-05). ~/Library/Application Support/SyncMemo/inbox/[폴더/]제목.txt
     /// 읽은 파일은 inbox/가져옴/ 으로 옮긴다(지우지 않음). 하위 폴더 이름 = 메모 폴더 이름.
+    /// .json 은 백업·맥 메모 내보내기 파일 — 설정 → 백업 → 가져오기와 똑같이 들어간다(2026-11-06).
     func takeInbox() -> [[String: Any]] {
         let fm = FileManager.default
         let root = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/SyncMemo/inbox")
@@ -415,13 +416,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         guard let en = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { return out }
         for case let u as URL in en {
             if u.path.hasPrefix(done.path) { en.skipDescendants(); continue }
-            guard u.pathExtension.lowercased() == "txt", let text = try? String(contentsOf: u, encoding: .utf8) else { continue }
+            let ext = u.pathExtension.lowercased()
+            guard ext == "txt" || ext == "json", let text = try? String(contentsOf: u, encoding: .utf8) else { continue }
             let rel = u.deletingLastPathComponent().path.dropFirst(root.path.count).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             let t = (try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
             var dst = done.appendingPathComponent(u.lastPathComponent), i = 2
-            while fm.fileExists(atPath: dst.path) { dst = done.appendingPathComponent("\(u.deletingPathExtension().lastPathComponent)_\(i).txt"); i += 1 }
+            while fm.fileExists(atPath: dst.path) { dst = done.appendingPathComponent("\(u.deletingPathExtension().lastPathComponent)_\(i).\(ext)"); i += 1 }
             guard (try? fm.moveItem(at: u, to: dst)) != nil else { continue }   // 못 옮기면 다음에 다시(중복 방지)
-            out.append(["name": u.deletingPathExtension().lastPathComponent, "folder": rel, "text": text, "mtime": t.timeIntervalSince1970 * 1000])
+            out.append(["name": u.deletingPathExtension().lastPathComponent, "folder": rel, "text": text, "mtime": t.timeIntervalSince1970 * 1000, "kind": ext])
         }
         return out
     }

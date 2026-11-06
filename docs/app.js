@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.3.4';
+  const VERSION = '1.3.5';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1180,8 +1180,10 @@ const App = (() => {
       if (!files?.length) return;
       const link = s => esc(s).replace(/https?:\/\/[^\s<>"']+/g, u => `<a href="${u}">${u}</a>`);
       const adds = [];
-      let upd = 0;
+      let upd = 0, imp = 0;
       for (const f of files) {
+        // .json = 백업·맥 메모 내보내기 파일 → 설정의 '가져오기'와 같은 길 (2026-11-06)
+        if (f.kind === 'json') { try { imp += await importData(JSON.parse(f.text)); } catch (e) { console.warn('inbox json', f.name, e); toast(`가져오지 못한 파일: ${f.name}`); } continue; }
         const lines = String(f.text).replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
         // 같은 폴더에 같은 제목 메모가 있으면 그 메모를 고쳐 쓴다(정정본 — 중복 메모를 만들지 않음).
         // 파일 이름 "옛제목 → 새제목" 이면 옛제목 메모를 새 제목으로 고친다(2026-11-05 콘티 날짜 정정)
@@ -1200,6 +1202,7 @@ const App = (() => {
       const n = adds.length ? await importData({ notes: adds }) : 0;
       if (upd) renderList();
       if (n || upd) toast(`받은 메모 ${n ? `새 ${n}개` : ''}${n && upd ? ' · ' : ''}${upd ? `고침 ${upd}개` : ''}`);
+      if (imp) toast(`메모 ${imp}개를 가져왔어요`, 5000);
     } catch (e) { console.warn('inbox', e); }
     finally { inboxBusy = false; }
   }
@@ -1359,11 +1362,26 @@ const App = (() => {
       if (Date.now() - lastTouch < 1500) return; // 터치는 아래 길게 누르기가 처리
       cardMenu({ x: e.clientX, y: e.clientY }, recs.get('note-' + c.dataset.id));
     };
-    // 터치: 길게 누르기 = 메뉴, 왼쪽으로 밀기 = 삭제, 오른쪽으로 밀기 = 고정
-    $('#notes').addEventListener('click', e => { if (Date.now() - eatClick < 400) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+    // 터치: 길게 누르기 = 메뉴, 왼쪽으로 밀기 = '삭제' 버튼 드러남(한 번 더 눌러야 삭제), 오른쪽으로 밀기 = 고정
+    // (오너 2026-11-06 "스와이프 삭제가 너무 민감해 한번에 삭제시키면 실수가 많이 날 것 같은데")
+    const DEL_W = 84; let armed = null;
+    const disarm = () => { if (!armed) return; armed.classList.remove('armed'); armed.style.transform = ''; armed = null; };
+    const onDelBtn = (c, x) => c === armed && x > c.getBoundingClientRect().right;
+    $('#notes').addEventListener('click', e => {
+      if (Date.now() - eatClick < 400) { e.stopImmediatePropagation(); e.preventDefault(); return; }   // 밀기 직후 따라오는 클릭
+      if (armed) {
+        const c = e.target.closest('.card'), hit = c && onDelBtn(c, e.clientX);
+        e.stopImmediatePropagation(); e.preventDefault();
+        const n = hit && recs.get('note-' + c.dataset.id); disarm();
+        if (n) { navigator.vibrate?.(10); trash(n); }
+        return;
+      }
+    }, true);
+    $('#notes').addEventListener('scroll', disarm, { passive: true });
     $('#notes').addEventListener('pointerdown', e => {
       const c = e.target.closest('.card'); if (!c || e.pointerType === 'mouse') return;
       lastTouch = Date.now();
+      if (armed) return;   // 열린 '삭제' 버튼이 있으면 이번 탭은 버튼 누르기 또는 닫기(위 click 이 처리)
       const n = recs.get('note-' + c.dataset.id), x0 = e.clientX, y0 = e.clientY, id = e.pointerId;
       const SW = 90; let mode = null, dx = 0;
       const lp = setTimeout(() => {
@@ -1392,7 +1410,7 @@ const App = (() => {
         const act = ev.type === 'pointerup' && (dx < -SW ? 'del' : dx > SW ? 'pin' : null);
         c.classList.remove('swiping'); c.style.transform = '';
         setTimeout(() => c.classList.remove('sw-l', 'sw-r'), 200);
-        if (act === 'del') { navigator.vibrate?.(10); trash(n); }
+        if (act === 'del') { navigator.vibrate?.(10); armed = c; c.classList.add('armed'); c.style.transform = `translateX(-${DEL_W}px)`; }
         else if (act === 'pin') { navigator.vibrate?.(10); togglePin(n); toast(n.pinned ? '맨 위에 고정했어요' : '고정을 풀었어요'); }
       };
       addEventListener('pointermove', move); addEventListener('pointerup', end); addEventListener('pointercancel', end);

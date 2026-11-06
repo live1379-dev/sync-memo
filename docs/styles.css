@@ -97,6 +97,8 @@ nav a svg { width: 18px; height: 18px; color: var(--accent); }
 .card.sw-l *, .card.sw-r * { color: #fff !important; }
 .card.sw-l::after, .card.sw-r::after { content: attr(data-sw); position: absolute; top: 50%; transform: translateY(-50%); font-weight: 700; font-size: 13px; }
 .card.sw-l::after { right: 14px; } .card.sw-r::after { left: 14px; }
+.card.armed { background: var(--panel); }
+.card.armed::after { content: '삭제'; position: absolute; top: 0; bottom: 0; right: -84px; width: 80px; display: flex; align-items: center; justify-content: center; background: #e5484d; color: #fff; font-weight: 700; font-size: 14px; border-radius: 10px; }
 .card.pressed { background: var(--sel); }
 .card.on { background: var(--sel); border-color: transparent; }
 .card .t { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 5px; align-items: center; }
