@@ -252,6 +252,15 @@ nav a svg { width: 18px; height: 18px; color: var(--accent); }
 @media (min-width: 761px) and (max-width: 1050px) {
   #app { grid-template-columns: 190px 280px 1fr; }
 }
+/* 펼친 폴드 세로 — 메모를 보다 뒤로가기 → 목록·메모 반반 */
+@media (min-width: 600px) and (max-width: 760px) and (orientation: portrait) {
+  #app[data-pane="list"]:not(.no-note) { grid-template-columns: 1fr 1fr; }
+  #app[data-pane="list"]:not(.no-note) #list { grid-area: 1 / 1; border-right: 1px solid var(--line); }
+  #app[data-pane="list"]:not(.no-note) #edit { display: flex; grid-area: 1 / 2; }
+  #app[data-pane="list"]:not(.no-note) #toolbar { padding-left: 4px; padding-right: 4px; overflow-x: auto; }
+  #app[data-pane="list"]:not(.no-note) #toolbar button { min-width: 34px; }
+  #app[data-pane="list"]:not(.no-note) #editMeta { display: none; }
+}
 /* 폴더 칸 숨김 (넓은 화면 — 펼친 폴드·맥) */
 #app { transition: grid-template-columns .2s ease; }
 #btnSideToggle { display: none; }

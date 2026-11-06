@@ -1,11 +1,14 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.3.4';
+  const VERSION = '1.3.5';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const isMobile = () => matchMedia('(max-width: 760px)').matches;
+  // 펼친 폴드 세로 — 뒤로가기를 누르면 메모를 닫지 않고 목록·메모 반반
+  const SPLIT_MQ = '(min-width: 600px) and (max-width: 760px) and (orientation: portrait)';
+  const isSplit = () => matchMedia(SPLIT_MQ).matches;
   const DAY = 86400000, TRASH_DAYS = 30;
   const TAG_RE = /(^|[\s(])#([\p{L}\p{N}_-]{1,30})/gu;
   const COLORS = { red: '#e5484d', orange: '#f08c00', yellow: '#e6b800', green: '#30a46c', blue: '#2d7ff9', purple: '#8e4ec6', gray: '#8b8d98' };
@@ -303,7 +306,8 @@ const App = (() => {
     curId = id;
     renderEditor();
     renderList();
-    if (isMobile() && app.dataset.pane !== 'edit') { history.pushState({ pane: 'edit' }, ''); app.dataset.pane = 'edit'; }
+    const halves = opts.fromList && isSplit() && app.dataset.pane === 'list' && leaving; // 반반 화면에서 다른 메모 → 오른쪽만 바꾼다
+    if (isMobile() && app.dataset.pane !== 'edit' && !halves) { history.pushState({ pane: 'edit' }, ''); app.dataset.pane = 'edit'; }
     if (opts.focus) focusStart();
     return leaving;
   }
@@ -1318,6 +1322,10 @@ const App = (() => {
     };
     $('#chips').oncontextmenu = e => { const b = e.target.closest('[data-type="folder"]'); if (!b) return; e.preventDefault(); folderMenu(b, recs.get('folder-' + b.dataset.id)); };
     matchMedia('(max-width: 760px)').addEventListener('change', onWidthChange);
+    // 반반 화면을 벗어나면(접기·회전) 목록 칸에 남은 메모를 닫는다
+    matchMedia(SPLIT_MQ).addEventListener('change', e => {
+      if (!e.matches && isMobile() && app.dataset.pane === 'list' && curId) { if (history.state?.half) return history.back(); const l = leaveNote(); curId = null; renderEditor(); renderList(); l.then(() => { renderList(); renderSide(); }); }
+    });
     $('#syncBox').onclick = () => { const s = Sync.state.status; s === 'synced' || s === 'syncing' ? Sync.run() : settings(); };
     $('#btnLayout').onclick = () => { prefs.layout = prefs.layout === 'grid' ? 'list' : 'grid'; savePrefs(); renderList(); };
     $('#btnSort').onclick = e => openMenu(e.currentTarget, [
@@ -1335,7 +1343,7 @@ const App = (() => {
     fab.onclick = () => newNote();
     fab.oncontextmenu = e => { e.preventDefault(); templateMenu(fab); };
     $('#q').oninput = e => { q = e.target.value.trim(); renderList(); };
-    $('#notes').onclick = e => { const c = e.target.closest('.card'); if (c) openNote(c.dataset.id); };
+    $('#notes').onclick = e => { const c = e.target.closest('.card'); if (c) openNote(c.dataset.id, { fromList: true }); };
     $('#notes').ondblclick = e => {
       const c = e.target.closest('.card');
       if (c && Native.platform === 'mac') { saveNow(); Native.call('openWindow', { id: c.dataset.id, title: recs.get('note-' + c.dataset.id)?.title || '메모' }).catch(() => {}); }
@@ -1404,16 +1412,25 @@ const App = (() => {
       renderList(); renderSide();
     };
     $('#btnToSide').onclick = () => { history.pushState({ pane: 'side' }, ''); app.dataset.pane = 'side'; };
-    $('#btnToList').onclick = () => { if (history.state?.pane === 'edit') history.back(); else { app.dataset.pane = 'list'; leaveNote().then(() => { renderList(); renderSide(); }); } };
+    $('#btnToList').onclick = () => {
+      if (history.state?.pane === 'edit' || history.state?.half) return history.back();
+      const leaving = leaveNote(); app.dataset.pane = 'list';
+      if (isSplit()) { curId = null; renderEditor(); renderList(); } // 반반 화면에서 한 번 더 → 목록만
+      leaving.then(() => { renderList(); renderSide(); });
+    };
     addEventListener('popstate', e => {
-      const p = e.state?.pane || 'list';
-      if (app.dataset.pane === 'edit' && p !== 'edit') {
+      const p = e.state?.pane || 'list', half = !!e.state?.half;
+      const keep = app.dataset.pane === 'edit' && p === 'list' && isSplit(); // 펼친 세로: 메모를 닫지 않고 반반
+      // 반반에서 뒤로(폰 뒤로가기 포함) → 오른쪽 메모를 닫고 목록만
+      const closeHalf = app.dataset.pane === 'list' && p === 'list' && !half && curId && isMobile();
+      if ((app.dataset.pane === 'edit' && p !== 'edit' && !keep) || closeHalf) {
         // 동기적으로 닫는다 — 뒤에 이어서 다른 메모를 여는 동작(공유받기 등)과 순서가 꼬이지 않게
         const leaving = leaveNote(); curId = null; renderEditor(); renderList();
         leaving.then(() => { renderList(); renderSide(); });
       }
       closeMenu(); if (!modalEl.hidden) { modalEl.hidden = true; modalEl.onclose && modalEl.onclose(); }
       app.dataset.pane = p;
+      if (keep && !half) history.pushState({ pane: 'list', half: true }, ''); // 반반도 뒤로가기 한 칸
     });
     $('#btnPin').onclick = () => cur() && togglePin(cur());
     $('#btnShare').onclick = share;
