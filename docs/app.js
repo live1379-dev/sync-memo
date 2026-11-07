@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.3.6';
+  const VERSION = '1.3.7';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -30,7 +30,7 @@ const App = (() => {
   let curId = null, loadedVer = 0, pendingSave = false, saveTimer = null, deferReload = false;
   let q = '';
   let prefs = { layout: 'list', sort: 'updated', checkedToBottom: true, theme: 'auto', sideHidden: true, fontSize: 'm' };
-  const FS = { s: '13px', m: '14px', l: '16px' }, FSN = { s: '작게', m: '보통', l: '크게' };
+  const FS = { s: '14px', m: '15px', l: '17px' }, FSN = { s: '작게', m: '보통', l: '크게' };
   let lockPw = null, lockTimer = null;
   const unlocked = new Map(); // 잠금 풀린 메모의 평문 (메모리에만)
   const keyCache = new Map();
@@ -309,11 +309,18 @@ const App = (() => {
     const leaving = curId && curId !== id ? leaveNote() : null;
     curId = id;
     renderEditor();
-    renderList();
+    markOn();
     const halves = opts.fromList && isSplit() && app.dataset.pane === 'list' && leaving; // 반반 화면에서 다른 메모 → 오른쪽만 바꾼다
     if (isMobile() && app.dataset.pane !== 'edit' && !halves) { history.pushState({ pane: 'edit' }, ''); app.dataset.pane = 'edit'; }
     if (opts.focus) focusStart();
     return leaving;
+  }
+  // 목록은 그대로 두고 선택 표시만 옮긴다 — 다시 그리면 메모가 많을 때 느리고, 두 번째 클릭이 새 칸에 떨어져 더블클릭이 안 된다
+  function markOn() {
+    const list = $('#notes');
+    list.querySelectorAll('.card.on').forEach(c => c.classList.remove('on'));
+    const c = curId && list.querySelector(`.card[data-id="${CSS.escape(curId)}"]`);
+    if (c) c.classList.add('on'); else if (curId) renderList(); // 목록에 없는 메모(새 메모 등)면 다시 그린다
   }
   function renderEditor() {
     const n = cur();
@@ -1357,6 +1364,14 @@ const App = (() => {
     fab.oncontextmenu = e => { e.preventDefault(); templateMenu(fab); };
     $('#q').oninput = e => { q = e.target.value.trim(); renderList(); };
     $('#notes').onclick = e => { const c = e.target.closest('.card'); if (c) openNote(c.dataset.id, { fromList: true }); };
+    // 맥: 머리글(폴더·목록·메모 칸 맨 위 줄)의 빈 곳을 잡으면 창이 끌리고, 두 번 누르면 확대 (오너 2026-11-07 "대충 위에 누르면 드래그")
+    if (Native.platform === 'mac') document.addEventListener('mousedown', e => {
+      if (e.button !== 0 || !e.target.closest('.side-head, .list-head, .edit-head')) return;
+      if (e.target.closest('button, a, input, select, textarea, [contenteditable="true"], #syncBox')) return;
+      if (e.target.closest('#listTitle') && view.type === 'folder') return; // 폴더 보기에선 제목을 누르면 폴더 메뉴
+      e.preventDefault();
+      Native.call(e.detail === 2 ? 'zoomWindow' : 'dragWindow').catch(() => {});
+    });
     $('#notes').ondblclick = e => {
       const c = e.target.closest('.card');
       if (c && Native.platform === 'mac') { saveNow(); Native.call('openWindow', { id: c.dataset.id, title: recs.get('note-' + c.dataset.id)?.title || '메모' }).catch(() => {}); }

@@ -140,7 +140,7 @@ nav a svg { width: 18px; height: 18px; color: var(--accent); }
 #toolbar button.dim { opacity: .35; }
 #toolbar button:hover, #toolbar button.on { background: var(--hover); color: var(--ink); }
 #paper { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-#editor { max-width: 760px; margin: 0 auto; padding: 18px 28px 40vh; outline: none; min-height: 100%; font-size: var(--fs, 14px); line-height: 1.6; word-wrap: break-word; caret-color: var(--accent); }
+#editor { max-width: 760px; margin: 0 auto; padding: 18px 28px 40vh; outline: none; min-height: 100%; font-size: var(--fs, 15px); line-height: 1.6; word-wrap: break-word; caret-color: var(--accent); }
 #editor:empty::before { content: "메모"; color: var(--ink3); }
 #editor > :first-child { margin-top: 0; }
 #editor h1 { font-size: 1.6em; line-height: 1.25; margin: .2em 0 .4em; letter-spacing: -.02em; }

@@ -183,6 +183,12 @@ final class DragStrip: NSView {
     }
 }
 
+/// 마지막 마우스 누름을 기억하는 웹뷰 — 화면(JS)이 머리글 빈 곳을 눌렀다고 알려 오면 그 누름으로 창을 끈다
+final class Web: WKWebView {
+    var lastDown: NSEvent?
+    override func mouseDown(with e: NSEvent) { lastDown = e; super.mouseDown(with: e) }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     var window: NSWindow!
     var cfg: WKWebViewConfiguration!
@@ -212,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
 
     func makeWeb() -> WKWebView {
-        let w = WKWebView(frame: .zero, configuration: cfg)
+        let w = Web(frame: .zero, configuration: cfg)
         w.navigationDelegate = self
         w.uiDelegate = self
         w.allowsBackForwardNavigationGestures = false
@@ -382,6 +388,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         case "auth.logout": auth.logout(); reply(wv, id, true, nil)
         case "http": http(wv, id, a)
         case "openWindow": openNoteWindow(a["id"] as? String ?? "", a["title"] as? String ?? "메모"); reply(wv, id, true, nil)
+        case "dragWindow": // 머리글 빈 곳 끌기 → 창 이동
+            if let e = (wv as? Web)?.lastDown, NSEvent.pressedMouseButtons & 1 == 1 { wv.window?.performDrag(with: e) }
+            reply(wv, id, true, nil)
+        case "zoomWindow": wv.window?.performZoom(nil); reply(wv, id, true, nil)
         case "setTitle": wv.window?.title = a["title"] as? String ?? "메모"; reply(wv, id, true, nil)
         case "saveFile":
             let p = NSSavePanel()

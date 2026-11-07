@@ -167,7 +167,7 @@ try {
 
   // 8-1. 레이아웃: 폴더 칸 기본 숨김 → 버튼으로 열기, 기본 글씨 15px
   const lay0 = await A.p.evaluate(() => ({ hidden: document.getElementById('app').classList.contains('side-hidden'), sideW: Math.round(document.getElementById('side').getBoundingClientRect().width), fs: getComputedStyle(document.getElementById('editor')).fontSize }));
-  check('폴더 칸 기본 숨김 + 기본 글씨 14px', lay0.hidden && lay0.sideW === 0 && lay0.fs === '14px', JSON.stringify(lay0));
+  check('폴더 칸 기본 숨김 + 기본 글씨 15px', lay0.hidden && lay0.sideW === 0 && lay0.fs === '15px', JSON.stringify(lay0));
   await A.p.click('#btnSideToggle'); await A.p.waitForTimeout(350);
   check('폴더 칸 버튼으로 열림', await A.p.evaluate(() => document.getElementById('side').getBoundingClientRect().width) > 150);
   // 8-2. 폴드 접기(커버 화면 폭) — 보던 메모가 이어짐, 다시 펼치면 3칸
