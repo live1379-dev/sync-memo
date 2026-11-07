@@ -71,11 +71,15 @@ public class MainActivity extends Activity {
     String token;
     long tokenAt;
     boolean loaded;
+    int shownDisplay = -1;
+    @SuppressWarnings("deprecation")
+    int displayId() { return Build.VERSION.SDK_INT >= 30 ? getDisplay().getDisplayId() : getWindowManager().getDefaultDisplay().getDisplayId(); }
     final ExecutorService bg = Executors.newSingleThreadExecutor();
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        shownDisplay = displayId();
         prefs = getSharedPreferences("sync", MODE_PRIVATE);
         WebView.setWebContentsDebuggingEnabled(true);
         web = new WebView(this);
@@ -404,9 +408,21 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 덱스: 앱이 다른 화면(모니터)으로 옮겨지면 웹뷰가 옛 화면 배율(폰 2.6배)을 그대로 써서 전부 크게 나온다
+     *  (에뮬레이터 보조 화면 1920×1080·160dpi 실측: 배율 2.625, 화면 폭 732px). 쓰던 메모를 저장하고 화면을 새로 만든다. */
     @Override
     public void onConfigurationChanged(Configuration c) {
         super.onConfigurationChanged(c);
+        // 덱스: 앱이 다른 화면(모니터)으로 옮겨지면 웹뷰가 옛 화면 배율(폰 2.6배)을 그대로 써서 전부 크게 나온다
+        // (에뮬레이터 보조 화면 1920×1080·160dpi 실측: 배율 2.625, 화면 폭 732px). 쓰던 메모를 저장하고 화면을 새로 만든다.
+        int disp = displayId();
+        if (shownDisplay >= 0 && disp != shownDisplay) {
+            shownDisplay = disp;
+            if (!loaded) { recreate(); return; }
+            web.evaluateJavascript("window.App&&App.flush&&App.flush()", v -> web.postDelayed(this::recreate, 400));
+            return;
+        }
+        shownDisplay = disp;
         if (loaded) web.evaluateJavascript("App.setSysDark(" + isNight() + ")", null); // 다시 시작하지 않고 바로 반영
     }
 

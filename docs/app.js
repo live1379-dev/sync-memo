@@ -1647,6 +1647,6 @@ const App = (() => {
     if (Native.platform === 'mac') { pullInbox(); setInterval(pullInbox, 15000); addEventListener('focus', pullInbox); }
   }
 
-  return { init, uid, onRemoteChange, launch, setSysDark, toggleSide, fmt, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, importData, saveNow, lockAll } };
+  return { init, uid, onRemoteChange, launch, flush: () => saveNow(), setSysDark, toggleSide, fmt, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, importData, saveNow, lockAll } };
 })();
 App.init();
