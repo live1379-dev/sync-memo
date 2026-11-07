@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.3.5';
+  const VERSION = '1.3.6';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -53,8 +53,11 @@ const App = (() => {
       if (m && m.updatedAt === d.updatedAt) { m._fileId = d._fileId; m._base = d._base; m._dirty = d._dirty; }
     }
   }
-  async function persist(rec) {
+  // edited: 화면에 보이는 '수정한 날'(editedAt). 기본은 지금, false 면 그대로(고정·색·이동 등), 숫자면 그 시각(가져오기).
+  // updatedAt 은 동기화 버전 번호라 항상 앞으로만 간다 — 둘을 섞으면 가져온 메모 날짜가 사라진다.
+  async function persist(rec, edited) {
     await fresh(rec);
+    if (rec.kind === 'note' && edited !== false) rec.editedAt = typeof edited === 'number' ? edited : Date.now();
     rec.updatedAt = Math.max(Date.now(), (rec.updatedAt || 0) + 1, (rec._base || 0) + 1);
     rec._dirty = true;
     recs.set(rec.key, rec);
@@ -213,7 +216,8 @@ const App = (() => {
   }
 
   // ───────── 목록 ─────────
-  const sortField = () => (prefs.sort === 'created' ? 'createdAt' : 'updatedAt');
+  const sortField = () => (prefs.sort === 'created' ? 'createdAt' : 'editedAt');
+  const editedOf = n => n.editedAt || n.updatedAt;
   function filtered() {
     let arr = notes();
     if (view.type === 'trash') arr = arr.filter(n => n.trashedAt);
@@ -233,7 +237,7 @@ const App = (() => {
     arr.sort((a, b) => {
       if (view.type !== 'trash' && !!b.pinned - !!a.pinned) return !!b.pinned - !!a.pinned;
       if (prefs.sort === 'title') return (a.title || '').localeCompare(b.title || '', 'ko');
-      return (b[f] || 0) - (a[f] || 0);
+      return (b[f] || b.updatedAt || 0) - (a[f] || a.updatedAt || 0);
     });
     return arr;
   }
@@ -319,7 +323,7 @@ const App = (() => {
     if (!n) { editor.innerHTML = ''; $('#edit').removeAttribute('data-color'); return; }
     n.color ? ($('#edit').dataset.color = n.color) : $('#edit').removeAttribute('data-color');
     $('#btnPin').classList.toggle('on', !!n.pinned);
-    $('#editMeta').textContent = fmtLong(n.updatedAt);
+    $('#editMeta').textContent = fmtLong(editedOf(n));
     const trashed = !!n.trashedAt;
     if (n.locked && !unlocked.has(n.id)) {
       $('#edit').classList.add('locked');
@@ -362,7 +366,7 @@ const App = (() => {
     derive(n, text);
     await persist(n);
     loadedVer = n.updatedAt;
-    $('#editMeta').textContent = fmtLong(n.updatedAt);
+    $('#editMeta').textContent = fmtLong(editedOf(n));
     renderList(); renderSide();
   }
   const isBlank = n => !n.locked && !n.hasMedia && !(n.text || '').trim();
@@ -819,16 +823,16 @@ const App = (() => {
       { label: '삭제', danger: true, act: () => trash(n) },
     ]);
   }
-  async function togglePin(n) { n.pinned = !n.pinned; await persist(n); renderEditor(); renderList(); renderSide(); }
-  async function setColor(n, c) { if (c) n.color = c; else delete n.color; await persist(n); renderEditor(); renderList(); }
+  async function togglePin(n) { n.pinned = !n.pinned; await persist(n, false); renderEditor(); renderList(); renderSide(); }
+  async function setColor(n, c) { if (c) n.color = c; else delete n.color; await persist(n, false); renderEditor(); renderList(); }
   async function trash(n) {
     await saveNow();
     if (isBlank(n)) { await purge(n); }
-    else { n.trashedAt = Date.now(); n.pinned = false; await persist(n); toast('최근 삭제됨으로 옮겼어요'); }
+    else { n.trashedAt = Date.now(); n.pinned = false; await persist(n, false); toast('최근 삭제됨으로 옮겼어요'); }
     if (curId === n.id) { curId = null; renderEditor(); if (isMobile() && app.dataset.pane === 'edit') history.back(); }
     renderList(); renderSide();
   }
-  async function restore(n) { delete n.trashedAt; if (n.folderId && !recs.get('folder-' + n.folderId) || recs.get('folder-' + n.folderId)?.deleted) n.folderId = null; await persist(n); renderEditor(); renderList(); renderSide(); toast('복구했어요'); }
+  async function restore(n) { delete n.trashedAt; if (n.folderId && !recs.get('folder-' + n.folderId) || recs.get('folder-' + n.folderId)?.deleted) n.folderId = null; await persist(n, false); renderEditor(); renderList(); renderSide(); toast('복구했어요'); }
   async function duplicate(n) {
     await saveNow();
     const html = n.locked ? unlocked.get(n.id) : n.html;
@@ -847,7 +851,7 @@ const App = (() => {
       <div class="opt"><span>단어</span><b>${words.toLocaleString()}</b></div>
       <div class="opt"><span>폴더</span><span>${fo ? esc(fo.name) : '없음'}</span></div>
       <div class="opt"><span>만든 날</span><span>${fmtLong(n.createdAt)}</span></div>
-      <div class="opt"><span>수정한 날</span><span>${fmtLong(n.updatedAt)}</span></div>
+      <div class="opt"><span>수정한 날</span><span>${fmtLong(editedOf(n))}</span></div>
       <div class="opt"><span>동기화</span><span>${n._dirty ? "올릴 변경 있음" : n._base ? '드라이브와 같음' : '아직 안 올림'}</span></div>
       <div class="acts"><button class="primary" data-x>닫기</button></div>`, (s, close) => s.querySelector('[data-x]').onclick = close);
   }
@@ -860,13 +864,13 @@ const App = (() => {
       s.querySelector('[data-x]').onclick = close;
       s.querySelectorAll('[data-f]').forEach(b => b.onclick = async () => {
         close();
-        for (const n of list) { n.folderId = b.dataset.f || null; await persist(n); }
+        for (const n of list) { n.folderId = b.dataset.f || null; await persist(n, false); }
         renderList(); renderSide(); toast('이동했어요');
       });
       s.querySelector('[data-new]').onclick = async () => {
         close();
         const f = await folderDialog();
-        if (f) { for (const n of list) { n.folderId = f.id; await persist(n); } renderList(); renderSide(); }
+        if (f) { for (const n of list) { n.folderId = f.id; await persist(n, false); } renderList(); renderSide(); }
       };
     });
   }
@@ -903,7 +907,7 @@ const App = (() => {
       { label: '폴더 삭제…', danger: true, act: async () => {
         const n = notes().filter(x => x.folderId === f.id && !x.trashedAt);
         if (!await ask({ title: `"${f.name}" 폴더를 삭제할까요?`, desc: n.length ? `안의 메모 ${n.length}개는 최근 삭제됨으로 옮겨집니다.` : '', ok: '삭제', danger: true })) return;
-        for (const x of n) { x.trashedAt = Date.now(); await persist(x); }
+        for (const x of n) { x.trashedAt = Date.now(); await persist(x, false); }
         f.deleted = true; await persist(f);
         if (view.type === 'folder' && view.id === f.id) setView({ type: 'all' }); else { renderSide(); renderList(); }
       } },
@@ -946,7 +950,7 @@ const App = (() => {
 
   // ───────── 메모 연결 ─────────
   function linkDialog() {
-    const list = notes().filter(n => !n.trashedAt && n.id !== curId).sort((a, b) => b.updatedAt - a.updatedAt);
+    const list = notes().filter(n => !n.trashedAt && n.id !== curId).sort((a, b) => editedOf(b) - editedOf(a));
     openModal(`<h3>다른 메모 연결</h3><input type="search" placeholder="메모 제목 검색"><div class="pick"></div><div class="acts"><button data-x>취소</button></div>`, (s, close) => {
       const inp = s.querySelector('input'), pick = s.querySelector('.pick');
       const draw = () => {
@@ -1143,7 +1147,7 @@ const App = (() => {
   }
   async function importData(data) {
     if (!data || !Array.isArray(data.notes)) throw new Error('알 수 없는 파일 형식');
-    let added = 0;
+    let added = 0, fixed = 0;
     const byName = new Map(folders().map(f => [f.name, f]));
     const fmap = new Map();
     for (const f of data.folders || []) {
@@ -1155,7 +1159,15 @@ const App = (() => {
       if (n.purged) continue;
       const id = n.id || uid();
       const ex = recs.get('note-' + id);
-      if (ex && !ex.purged && ex.updatedAt >= (n.updatedAt || 0)) continue;
+      const when = n.editedAt || n.updatedAt;
+      if (ex && !ex.purged && ex.updatedAt >= (n.updatedAt || 0)) {
+        // 예전 판으로 가져와 수정한 날이 '가져온 시각'이 된 메모 → 가져온 뒤 손대지 않았으면 원래 날짜로 되돌린다
+        if (when && !ex.editedAt && !ex.locked && !n.locked) {
+          const probe = { html: sanitize(n.html || '') }; derive(probe);
+          if (probe.text === ex.text) { if (n.createdAt) ex.createdAt = n.createdAt; await persist(ex, when); fixed++; }
+        }
+        continue;
+      }
       let folderId = n.folderId ? fmap.get(n.folderId) || (recs.get('folder-' + n.folderId) ? n.folderId : null) : null;
       if (!folderId && n.folderName) {
         let f = byName.get(n.folderName);
@@ -1166,10 +1178,11 @@ const App = (() => {
       delete rec.folderName;
       derive(rec);
       if (n.locked) rec.title = n.title;
-      await persist(rec);
+      await persist(rec, when || undefined);
       added++;
     }
     renderSide(); renderList();
+    importData.fixed = fixed;
     return added;
   }
 
@@ -1455,7 +1468,7 @@ const App = (() => {
     $('#fileImage').onchange = e => { insertImages([...e.target.files]); e.target.value = ''; };
     $('#fileImport').onchange = async e => {
       const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-      try { const n = await importData(JSON.parse(await f.text())); toast(`메모 ${n}개를 가져왔어요`); } catch (err) { toast('가져오기 실패: ' + err.message); }
+      try { const n = await importData(JSON.parse(await f.text())); toast(`메모 ${n}개를 가져왔어요` + (importData.fixed ? ` · ${importData.fixed}개 날짜 복구` : '')); } catch (err) { toast('가져오기 실패: ' + err.message); }
     };
 
     editor.addEventListener('input', e => { normalizeChecklists(e.inputType === 'insertParagraph'); autoLink(e); scheduleSave(); touchLock(); });
