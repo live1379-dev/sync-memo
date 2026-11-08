@@ -233,6 +233,23 @@ try {
   const names = [...drive.files.values()].map(f => f.name);
   check('드라이브: 레코드당 버전 파일 1개로 정리됨', new Set(names).size === names.length, `${names.length}개`);
 
+  // 새로고침: ↻ 버튼 · 폰 목록 당기기 (오너 2026-11-08)
+  await A.p.evaluate(() => { window.__runs = 0; const r = Sync.run; Sync.run = (...x) => { window.__runs++; return r(...x); }; });
+  await A.p.click('#btnRefresh');
+  await A.p.waitForFunction(() => !document.getElementById('btnRefresh').classList.contains('spin'));
+  check('↻ 버튼 → 바로 동기화 + "최신 상태예요"', (await A.p.evaluate(() => window.__runs)) >= 1 && (await A.p.textContent('#toast')).includes('최신 상태예요'));
+  await B.p.evaluate(() => { history.length; window.__runs = 0; const r = Sync.run; Sync.run = (...x) => { window.__runs++; return r(...x); }; });
+  await B.p.evaluate(() => { const a = document.getElementById('app'); if (a.dataset.pane !== 'list') document.querySelector('#btnBack, .back')?.click(); });
+  await B.p.waitForTimeout(300);
+  const cdp = await B.ctx.newCDPSession(B.p);
+  const pbox = await B.p.evaluate(() => { const r = document.getElementById("notes").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 20, vis: r.height > 0 }; });
+  const tp = y => [{ x: pbox.x, y, id: 1 }];
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: tp(pbox.y) });
+  for (let d = 20; d <= 220; d += 20) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: tp(pbox.y + d) });
+  const ready = await B.p.evaluate(() => document.getElementById('ptr').classList.contains('ready'));
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await B.p.waitForTimeout(800);
+  check('폰: 목록 맨 위에서 당겨 놓으면 동기화', pbox.vis && ready && (await B.p.evaluate(() => window.__runs)) >= 1, JSON.stringify({ ...pbox, ready, runs: await B.p.evaluate(() => window.__runs) }));
   // 11-0. 링크 자동 인식: 주소 + 스페이스 / 주소 + 엔터
   await A.p.click('#btnNew');
   await A.p.keyboard.type('링크 테스트'); await A.p.keyboard.press('Enter');

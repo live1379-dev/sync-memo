@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.1';
+  const VERSION = '1.4.2';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1213,7 +1213,19 @@ const App = (() => {
         const same = t => notes().find(n => !n.trashedAt && !n.locked && (n.folderId || null) === fid && (n.title || '').trim() === t.trim());
         const [oldT, newT] = f.name.includes('→') ? f.name.split('→').map(s => s.trim()) : [null, f.name];
         if (lines[0].trim() !== newT.trim()) lines.unshift(newT);   // 첫 줄 = 메모 제목
-        const html = lines.map(l => `<p>${l.trim() ? link(l) : '<br>'}</p>`).join('');
+        // 📎 줄 + 드라이브 파일 주소 → 폰에서 첨부한 것과 같은 첨부 칩 (오너 2026-11-08 "음성파일 올린 것처럼")
+        //   "📎 이름.pdf (1.0MB) https://drive.google.com/file/d/ID/view" 한 줄, 또는 📎 줄 다음 줄에 주소만
+        for (let i = lines.length - 2; i >= 0; i--)
+          if (/^\s*📎/.test(lines[i]) && /^\s*https:\/\/drive\.google\.com\/file\/d\/[\w-]+\S*\s*$/.test(lines[i + 1])) lines.splice(i, 2, lines[i] + ' ' + lines[i + 1].trim());
+        const chipOf = l => {
+          const m = l.match(/^\s*📎\s*(?:첨부\s*[:：]\s*)?(.*?)\s*https:\/\/drive\.google\.com\/file\/d\/([\w-]+)\S*\s*$/);
+          if (!m) return null;
+          const z = m[1].match(/\(([^)]*?)([\d.]+)\s*(KB|MB|GB)[^)]*\)\s*$/i);
+          const size = z ? Math.round(parseFloat(z[2]) * { KB: 1024, MB: 1048576, GB: 1073741824 }[z[3].toUpperCase()]) : 0;
+          const name = m[1].replace(/\s*\([^)]*\)\s*$/, '').trim() || '첨부 파일';
+          return fileChip({ id: m[2], name, size });
+        };
+        const html = lines.map(l => chipOf(l) || `<p>${l.trim() ? link(l) : '<br>'}</p>`).join('');
         const ex = (oldT && same(oldT)) || same(lines[0]);
         if (ex && (!f.folder || fid)) {
           if (ex.id === curId) await saveNow();
@@ -1346,6 +1358,8 @@ const App = (() => {
     matchMedia(SPLIT_MQ).addEventListener('change', e => {
       if (!e.matches && isMobile() && app.dataset.pane === 'list' && curId) { if (history.state?.half) return history.back(); const l = leaveNote(); curId = null; renderEditor(); renderList(); l.then(() => { renderList(); renderSide(); }); }
     });
+    $('#btnRefresh').onclick = () => refreshNow();
+    pullToRefresh();
     $('#syncBox').onclick = () => { const s = Sync.state.status; s === 'synced' || s === 'syncing' ? Sync.run() : settings(); };
     $('#btnLayout').onclick = () => { prefs.layout = prefs.layout === 'grid' ? 'list' : 'grid'; savePrefs(); renderList(); };
     $('#btnSort').onclick = e => openMenu(e.currentTarget, [
@@ -1608,6 +1622,53 @@ const App = (() => {
       if (left <= node.length) { const r = document.createRange(); r.setStart(node, left); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return; }
       left -= node.length;
     }
+  }
+  // 지금 동기화 — ↻ 버튼 · 목록 당기기 (오너 2026-11-08 "수동적으로 기다리는 게 불편")
+  let refreshing = false;
+  async function refreshNow() {
+    if (refreshing) return;
+    refreshing = true;
+    $('#btnRefresh').classList.add('spin');
+    try {
+      await saveNow();
+      if (Native.platform === 'mac') await pullInbox();
+      await Sync.run();
+      lastTyped = 0; applyDeferred(); // 직접 누른 것이니 열린 메모도 기다리지 않고 바로
+      const st = Sync.state;
+      toast({ synced: '최신 상태예요', offline: '오프라인 — 연결되면 동기화해요', login: '구글 연결이 필요해요 (설정)', nosetup: '동기화 설정이 필요해요 (설정)' }[st.status]
+        || '동기화 오류 — ' + (st.error || st.status));
+    } finally {
+      refreshing = false;
+      $('#btnRefresh').classList.remove('spin');
+    }
+  }
+  function pullToRefresh() {
+    const list = $('#notes'), ptr = $('#ptr'), MAX = 90, GO = 70;
+    let y0 = null, dy = 0;
+    const top = () => list.offsetTop;
+    const show = (d, anim) => {
+      ptr.style.transition = anim ? 'transform .2s, opacity .2s' : 'none';
+      ptr.style.transform = `translateY(${top() - 40 + d}px) rotate(${d * 3}deg)`;
+      ptr.style.opacity = Math.min(1, d / GO);
+      ptr.classList.toggle('ready', d >= GO);
+    };
+    list.addEventListener('touchstart', e => { y0 = list.scrollTop <= 0 && e.touches.length === 1 ? e.touches[0].clientY : null; dy = 0; }, { passive: true });
+    list.addEventListener('touchmove', e => {
+      if (y0 == null) return;
+      const d = e.touches[0].clientY - y0;
+      if (d <= 0 || list.scrollTop > 0) { if (dy) show(0); y0 = d < 0 ? null : y0; dy = 0; return; }
+      dy = Math.min(MAX, d * 0.5); show(dy);
+    }, { passive: true });
+    const end = async () => {
+      if (y0 == null) return;
+      y0 = null;
+      if (dy < GO) { show(0, true); dy = 0; return; }
+      dy = 0; navigator.vibrate?.(10);
+      show(56, true); ptr.classList.add('spin');
+      try { await refreshNow(); } finally { ptr.classList.remove('spin'); show(0, true); }
+    };
+    list.addEventListener('touchend', end);
+    list.addEventListener('touchcancel', end);
   }
   function applyDeferred() {
     if (!deferReload || pendingSave || Date.now() - lastTyped < 4000) return;
