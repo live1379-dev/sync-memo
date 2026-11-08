@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.0';
+  const VERSION = '1.4.1';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -27,7 +27,7 @@ const App = (() => {
 
   let recs = new Map();
   let view = { type: 'all' };
-  let curId = null, loadedVer = 0, pendingSave = false, saveTimer = null, deferReload = false;
+  let curId = null, loadedVer = 0, pendingSave = false, saveTimer = null, deferReload = false, lastTyped = 0;
   let q = '';
   let prefs = { layout: 'list', sort: 'updated', checkedToBottom: true, theme: 'auto', sideHidden: true, fontSize: 'm' };
   const FS = { s: '14px', m: '15px', l: '17px' }, FSN = { s: '작게', m: '보통', l: '크게' };
@@ -353,7 +353,7 @@ const App = (() => {
     const s = getSelection(); s.removeAllRanges(); s.addRange(r);
   }
   function scheduleSave() {
-    pendingSave = true;
+    pendingSave = true; lastTyped = Date.now();
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 350);
   }
@@ -1562,7 +1562,8 @@ const App = (() => {
       if (m && e.code === 'KeyN' && (e.altKey || !e.shiftKey)) { e.preventDefault(); newNote(); }
       if (m && e.code === 'Backspace' && !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName) && document.activeElement !== editor && cur()) { e.preventDefault(); trash(cur()); }
     });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) { saveNow(); if (lockPw) { clearTimeout(lockTimer); lockTimer = setTimeout(lockAll, 5 * 60000); } } });
+    setInterval(applyDeferred, 2000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) applyDeferred(); if (document.hidden) { saveNow(); if (lockPw) { clearTimeout(lockTimer); lockTimer = setTimeout(lockAll, 5 * 60000); } } });
     addEventListener('pagehide', () => saveNow());
     // 창 전체가 밀리면 (커서 따라가기 등) 즉시 제자리 — 각 칸은 자기 안에서만 스크롤
     addEventListener('scroll', () => { if (scrollY || scrollX) scrollTo(0, 0); });
@@ -1589,8 +1590,34 @@ const App = (() => {
     if (curId && (!n || n.purged)) { curId = null; renderEditor(); return; }
     if (n && n.updatedAt !== loadedVer && !pendingSave) {
       if (n.locked && unlocked.has(n.id) && lockPw) { try { unlocked.set(n.id, await decrypt(n.enc, lockPw)); } catch { unlocked.delete(n.id); } }
-      if (document.activeElement === editor) deferReload = true; else renderEditor();
+      if (document.activeElement === editor) { deferReload = true; applyDeferred(); } else renderEditor();
     }
+  }
+  // 편집칸에 커서가 남아 있어도(폰은 메모를 열면 늘 그렇다) 타자를 멈춘 지 4초 지났고 저장할 게 없으면
+  // 받은 내용을 바로 보여 준다 — 전엔 편집칸을 벗어나야만 반영돼, 앱을 껐다 켜야 바뀌었다. 커서 위치는 글자 수로 되살린다.
+  function editorCaret() {
+    const s = getSelection();
+    if (!s.rangeCount || !editor.contains(s.anchorNode)) return null;
+    const r = document.createRange(); r.selectNodeContents(editor); r.setEnd(s.anchorNode, s.anchorOffset);
+    return r.toString().length;
+  }
+  function setEditorCaret(off) {
+    const w = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let node, left = off;
+    while ((node = w.nextNode())) {
+      if (left <= node.length) { const r = document.createRange(); r.setStart(node, left); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return; }
+      left -= node.length;
+    }
+  }
+  function applyDeferred() {
+    if (!deferReload || pendingSave || Date.now() - lastTyped < 4000) return;
+    const n = cur();
+    if (!n || n.updatedAt === loadedVer) { deferReload = false; return; } // 그새 화면 판이 이미 최신(내 저장·다른 메모로 이동)
+    if (document.activeElement !== editor) { renderEditor(); return; }
+    const off = editorCaret(), y = editor.scrollTop;
+    renderEditor();
+    editor.scrollTop = y;
+    if (off != null) setEditorCaret(off);
   }
 
   async function handleLaunchParams() {

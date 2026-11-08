@@ -116,6 +116,19 @@ try {
   check('맥: 폰에서 고친 내용이 반영', (await A.p.textContent('#editor')).includes('그리고 빵'));
   check('폰 편집 후에도 드라이브 파일 1개 (중복 없음)', driveNotes().length === 1);
 
+  // 3-1. 폰은 메모를 연 채(편집칸 커서 유지) 켜 두는데, 맥에서 고친 내용이 껐다 켜지 않아도 들어와야 한다
+  check('폰: 편집칸에 커서가 있는 상태', await B.p.evaluate(() => document.activeElement === document.getElementById('editor')));
+  await endOfEditor(A.p);
+  await A.p.keyboard.type(' 맥추가');
+  await save(A.p);
+  await sync(A.p);
+  await A.p.click('#q');
+  await B.p.waitForTimeout(4100); // 폰에서 마지막으로 친 지 4초
+  await sync(B.p);
+  await B.p.waitForTimeout(2200);
+  const live = await B.p.evaluate(() => ({ text: document.getElementById('editor').textContent, focus: document.activeElement === document.getElementById('editor') }));
+  check('폰: 커서 둔 채로도 맥에서 고친 내용이 바로 반영 (커서 유지)', live.text.includes('맥추가') && live.focus, JSON.stringify(live));
+
   // 4. 둘 다 오프라인에서 같은 메모 수정 → 충돌 사본
   await A.ctx.setOffline(true); await B.ctx.setOffline(true);
   await A.p.click('.card');
