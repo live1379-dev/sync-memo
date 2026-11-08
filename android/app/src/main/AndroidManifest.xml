@@ -27,6 +27,16 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- 삼성 음성 녹음 등에서 녹음(m4a)·전사(txt) 파일 공유 → 메모에 첨부 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/*" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
         <service

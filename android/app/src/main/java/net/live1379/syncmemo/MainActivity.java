@@ -5,6 +5,8 @@ import android.app.Activity;
 import android.app.StatusBarManager;
 import android.content.ComponentName;
 import android.content.ContentValues;
+import android.database.Cursor;
+import android.provider.OpenableColumns;
 import android.graphics.drawable.Icon;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -41,9 +43,21 @@ import com.google.android.gms.common.api.ApiException;
 import com.google.android.gms.common.api.CommonStatusCodes;
 import com.google.android.gms.common.api.Scope;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.util.ArrayList;
+import java.util.List;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
@@ -60,7 +74,10 @@ public class MainActivity extends Activity {
     static final String HOST = "appassets.androidplatform.net";
     static final String BASE = "https://" + HOST + "/assets/www/index.html";
     static final String SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-    static final int REQ_FILE = 1, REQ_AUTH = 2, REQ_MIC = 3;
+    // 첨부·Claude 요청은 오너 드라이브의 보이는 폴더에 올린다 — 앱이 만든 파일만 다루는 drive.file (첨부할 때 처음 한 번 허용)
+    static final String FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+    static final String ATTACH_FOLDER = "싱크 메모 첨부", REQUEST_FOLDER = "싱크 메모 Claude 요청";
+    static final int REQ_FILE = 1, REQ_AUTH = 2, REQ_MIC = 3, REQ_PICK = 4, REQ_AUTH2 = 5;
 
     WebView web;
     WebViewAssetLoader loader;
@@ -75,6 +92,11 @@ public class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     int displayId() { return Build.VERSION.SDK_INT >= 30 ? getDisplay().getDisplayId() : getWindowManager().getDefaultDisplay().getDisplayId(); }
     final ExecutorService bg = Executors.newSingleThreadExecutor();
+    final ExecutorService up = Executors.newSingleThreadExecutor(); // 큰 녹음 올리기가 동기화 토큰 작업을 막지 않게 따로
+    final List<Uri> pending = new ArrayList<>(); // 공유받았거나 고른 파일 — 화면이 붙일 메모를 고르면 올린다
+    int pickCallId = -1, fileAuthId = -1;
+    Tok fileAuthThen;
+    interface Tok { void got(String token) throws Exception; }
 
     @Override
     protected void onCreate(Bundle state) {
@@ -151,13 +173,21 @@ public class MainActivity extends Activity {
         });
         web.addJavascriptInterface(new Bridge(), "SyncMemoAndroid");
         setContentView(web);
-        String q = launchQuery(getIntent());
+        String q = state == null ? launchQuery(getIntent()) : null; // 화면을 새로 만들 때(덱스 이동) 같은 공유를 두 번 받지 않게
         web.loadUrl(q == null ? BASE : BASE + "?" + q);
     }
 
-    /** 공유받기·바로가기 → 화면에 넘길 쿼리 (?text= / ?new=) */
+    /** 공유받기·바로가기 → 화면에 넘길 쿼리 (?text= / ?new= / ?files=) */
     String launchQuery(Intent it) {
         if (it == null) return null;
+        if (Intent.ACTION_SEND.equals(it.getAction()) || Intent.ACTION_SEND_MULTIPLE.equals(it.getAction())) {
+            List<Uri> uris = streams(it);
+            if (!uris.isEmpty()) { // 녹음(m4a)·전사(txt) 같은 파일 → 화면이 붙일 메모를 묻는다
+                pending.clear();
+                pending.addAll(uris);
+                return "files=" + uris.size();
+            }
+        }
         if (Intent.ACTION_SEND.equals(it.getAction())) {
             String text = it.getStringExtra(Intent.EXTRA_TEXT), title = it.getStringExtra(Intent.EXTRA_SUBJECT);
             return "text=" + Uri.encode(text == null ? "" : text) + (title != null ? "&title=" + Uri.encode(title) : "");
@@ -167,6 +197,26 @@ public class MainActivity extends Activity {
             return "new=" + Uri.encode(t == null ? "1" : t);
         }
         return null;
+    }
+
+    @SuppressWarnings("deprecation")
+    List<Uri> streams(Intent it) {
+        List<Uri> out = new ArrayList<>();
+        try {
+            if (Intent.ACTION_SEND_MULTIPLE.equals(it.getAction())) {
+                ArrayList<Uri> l = it.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+                if (l != null) for (Uri u : l) if (u != null) out.add(u);
+            } else {
+                Uri u = it.getParcelableExtra(Intent.EXTRA_STREAM);
+                if (u != null) out.add(u);
+            }
+        } catch (Exception ignored) { }
+        if (out.isEmpty() && it.getClipData() != null && it.getStringExtra(Intent.EXTRA_TEXT) == null)
+            for (int i = 0; i < it.getClipData().getItemCount(); i++) {
+                Uri u = it.getClipData().getItemAt(i).getUri();
+                if (u != null) out.add(u);
+            }
+        return out;
     }
 
     @Override
@@ -192,7 +242,7 @@ public class MainActivity extends Activity {
     protected void onResume() { super.onResume(); web.onResume(); }
 
     @Override
-    protected void onDestroy() { web.destroy(); bg.shutdown(); super.onDestroy(); }
+    protected void onDestroy() { web.destroy(); bg.shutdown(); up.shutdown(); super.onDestroy(); }
 
     @Override
     protected void onActivityResult(int req, int code, Intent data) {
@@ -207,6 +257,28 @@ public class MainActivity extends Activity {
             }
             if (fileCb != null) fileCb.onReceiveValue(res);
             fileCb = null;
+        } else if (req == REQ_PICK) {
+            int id = pickCallId;
+            pickCallId = -1;
+            pending.clear();
+            if (code == RESULT_OK && data != null) {
+                if (data.getClipData() != null)
+                    for (int i = 0; i < data.getClipData().getItemCount(); i++) pending.add(data.getClipData().getItemAt(i).getUri());
+                else if (data.getData() != null) pending.add(data.getData());
+            }
+            resolve(id, pendingInfo());
+        } else if (req == REQ_AUTH2) {
+            int id = fileAuthId;
+            Tok then = fileAuthThen;
+            fileAuthId = -1;
+            fileAuthThen = null;
+            try {
+                runTok(id, then, Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(data).getAccessToken());
+            } catch (ApiException e) {
+                reject(id, explain(e));
+            } catch (Exception e) {
+                reject(id, "드라이브 권한을 받지 못했어요");
+            }
         } else if (req == REQ_AUTH) {
             int id = authCallId;
             authCallId = -1;
@@ -323,6 +395,33 @@ public class MainActivity extends Activity {
                     resolve(id, new JSONObject().put("msg", "알림창을 내려 편집(연필) → '새 메모'를 끌어다 놓으세요"));
                 }
                 break;
+            case "files.pick": {
+                pickCallId = id;
+                Intent i = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+                        .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                startActivityForResult(Intent.createChooser(i, "첨부할 파일"), REQ_PICK);
+                break;
+            }
+            case "files.pending":
+                resolve(id, pendingInfo());
+                break;
+            case "files.upload": {
+                final List<Uri> list = new ArrayList<>(pending);
+                if (list.isEmpty()) { resolve(id, new JSONArray()); break; }
+                fileToken(id, t -> {
+                    JSONArray out = new JSONArray();
+                    for (int i = 0; i < list.size(); i++) out.put(uploadUri(t, list.get(i), (i + 1) + "/" + list.size()));
+                    runOnUiThread(() -> pending.removeAll(list));
+                    resolve(id, out);
+                });
+                break;
+            }
+            case "claude.request": { // 길게 누르기 → Claude 에게 회의록: 메모 내용·첨부 목록을 요청 파일로 올린다 (맥이 받아 처리)
+                final String name = a.getString("name");
+                final byte[] b = a.getString("json").getBytes(StandardCharsets.UTF_8);
+                fileToken(id, t -> resolve(id, upload(t, REQUEST_FOLDER, name, "application/json", new ByteArrayInputStream(b), b.length, null)));
+                break;
+            }
             case "openExternal":
                 openExternal(a.getString("url"));
                 resolve(id, JSONObject.NULL);
@@ -349,6 +448,168 @@ public class MainActivity extends Activity {
                     } else gotToken(id, r.getAccessToken());
                 })
                 .addOnFailureListener(e -> reject(id, e instanceof ApiException ? explain((ApiException) e) : "구글 연결 실패: " + e.getMessage()));
+    }
+
+    /** drive.file 까지 받은 토큰으로 작업. 처음엔 구글 허용 창이 한 번 뜬다. 동기화(appdata)는 이 권한 없이 그대로 돈다. */
+    void fileToken(int id, Tok then) {
+        AuthorizationRequest req = AuthorizationRequest.builder()
+                .setRequestedScopes(Arrays.asList(new Scope(SCOPE), new Scope(FILE_SCOPE))).build();
+        Identity.getAuthorizationClient(this).authorize(req)
+                .addOnSuccessListener(r -> {
+                    if (r.hasResolution()) {
+                        try {
+                            fileAuthId = id;
+                            fileAuthThen = then;
+                            startIntentSenderForResult(r.getPendingIntent().getIntentSender(), REQ_AUTH2, null, 0, 0, 0);
+                        } catch (Exception e) {
+                            reject(id, "구글 연결 실패: " + e.getMessage());
+                        }
+                    } else runTok(id, then, r.getAccessToken());
+                })
+                .addOnFailureListener(e -> reject(id, e instanceof ApiException ? explain((ApiException) e) : "구글 연결 실패: " + e.getMessage()));
+    }
+
+    void runTok(int id, Tok then, String t) {
+        if (t == null) { reject(id, "토큰을 받지 못했어요"); return; }
+        up.execute(() -> {
+            try { then.got(t); } catch (Exception e) { reject(id, "드라이브에 올리지 못했어요: " + e.getMessage()); }
+        });
+    }
+
+    JSONArray pendingInfo() {
+        JSONArray a = new JSONArray();
+        for (Uri u : pending) {
+            try { String[] m = meta(u); a.put(new JSONObject().put("name", m[0]).put("size", Long.parseLong(m[1]))); } catch (Exception ignored) { }
+        }
+        return a;
+    }
+
+    /** [이름, 크기(-1 = 모름)] */
+    String[] meta(Uri u) {
+        String name = u.getLastPathSegment() == null ? "파일" : u.getLastPathSegment();
+        long size = -1;
+        try (Cursor c = getContentResolver().query(u, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME), j = c.getColumnIndex(OpenableColumns.SIZE);
+                if (i >= 0 && !c.isNull(i)) name = c.getString(i);
+                if (j >= 0 && !c.isNull(j)) size = c.getLong(j);
+            }
+        } catch (Exception ignored) { }
+        return new String[]{name, String.valueOf(size)};
+    }
+
+    JSONObject uploadUri(String t, Uri u, String step) throws Exception {
+        String[] m = meta(u);
+        String mime = getContentResolver().getType(u);
+        if (mime == null || mime.equals("application/octet-stream")) mime = guessMime(m[0]);
+        long size = Long.parseLong(m[1]);
+        File tmp = null;
+        try {
+            if (size < 0) { // 크기를 모르면 잠깐 복사해서 잰다 (드라이브 이어올리기는 길이가 필요)
+                tmp = File.createTempFile("up", null, getCacheDir());
+                try (InputStream in = getContentResolver().openInputStream(u); OutputStream os = new FileOutputStream(tmp)) { copy(in, os, -1, null); }
+                size = tmp.length();
+            }
+            try (InputStream in = tmp != null ? new FileInputStream(tmp) : getContentResolver().openInputStream(u)) {
+                if (in == null) throw new Exception("파일을 열 수 없어요");
+                return upload(t, ATTACH_FOLDER, m[0], mime, in, size, step);
+            }
+        } finally {
+            if (tmp != null) tmp.delete();
+        }
+    }
+
+    static String guessMime(String name) {
+        String n = name.toLowerCase();
+        return n.endsWith(".m4a") ? "audio/mp4" : n.endsWith(".mp3") ? "audio/mpeg" : n.endsWith(".wav") ? "audio/wav"
+                : n.endsWith(".txt") ? "text/plain" : n.endsWith(".pdf") ? "application/pdf" : "application/octet-stream";
+    }
+
+    /** 드라이브 이어올리기(resumable) — 큰 녹음도 메모리에 다 올리지 않고 흘려 보낸다 */
+    JSONObject upload(String t, String folderName, String name, String mime, InputStream in, long size, String step) throws Exception {
+        String folder = folder(t, folderName);
+        HttpURLConnection c = http("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable", "POST", t);
+        c.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+        c.setRequestProperty("X-Upload-Content-Type", mime);
+        c.setRequestProperty("X-Upload-Content-Length", String.valueOf(size));
+        body(c, new JSONObject().put("name", name).put("parents", new JSONArray().put(folder)).toString());
+        text(c);
+        String loc = c.getHeaderField("Location");
+        if (loc == null) throw new Exception("올릴 주소를 받지 못했어요");
+        HttpURLConnection p = (HttpURLConnection) new URL(loc).openConnection();
+        p.setRequestMethod("PUT");
+        p.setDoOutput(true);
+        p.setConnectTimeout(30000);
+        p.setReadTimeout(300000);
+        p.setRequestProperty("Content-Type", mime);
+        p.setFixedLengthStreamingMode(size);
+        try (OutputStream os = p.getOutputStream()) { copy(in, os, size, step); }
+        JSONObject r = new JSONObject(text(p));
+        return new JSONObject().put("id", r.getString("id")).put("name", name).put("size", size).put("mime", mime);
+    }
+
+    /** 이름으로 폴더를 찾고(앱이 만든 것만 보인다) 없으면 만든다. 오너가 지웠으면 다시 만든다. */
+    String folder(String t, String name) throws Exception {
+        String key = "folder:" + name, id = prefs.getString(key, null);
+        if (id != null) {
+            try {
+                if (!new JSONObject(text(http("https://www.googleapis.com/drive/v3/files/" + id + "?fields=trashed", "GET", t))).optBoolean("trashed")) return id;
+            } catch (Exception ignored) { }
+        }
+        String q = "name='" + name.replace("'", "\\'") + "' and mimeType='application/vnd.google-apps.folder' and trashed=false";
+        JSONArray f = new JSONObject(text(http("https://www.googleapis.com/drive/v3/files?fields=files(id)&q=" + URLEncoder.encode(q, "UTF-8"), "GET", t))).optJSONArray("files");
+        if (f != null && f.length() > 0) id = f.getJSONObject(0).getString("id");
+        else {
+            HttpURLConnection c = http("https://www.googleapis.com/drive/v3/files?fields=id", "POST", t);
+            c.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            body(c, new JSONObject().put("name", name).put("mimeType", "application/vnd.google-apps.folder").toString());
+            id = new JSONObject(text(c)).getString("id");
+        }
+        prefs.edit().putString(key, id).apply();
+        return id;
+    }
+
+    static HttpURLConnection http(String url, String method, String t) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setRequestMethod(method);
+        c.setConnectTimeout(30000);
+        c.setReadTimeout(60000);
+        c.setRequestProperty("Authorization", "Bearer " + t);
+        return c;
+    }
+
+    static void body(HttpURLConnection c, String s) throws Exception {
+        byte[] b = s.getBytes(StandardCharsets.UTF_8);
+        c.setDoOutput(true);
+        c.setFixedLengthStreamingMode(b.length);
+        try (OutputStream os = c.getOutputStream()) { os.write(b); }
+    }
+
+    static String text(HttpURLConnection c) throws Exception {
+        int code = c.getResponseCode();
+        InputStream in = code < 400 ? c.getInputStream() : c.getErrorStream();
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+        if (in != null) try (InputStream i = in) { byte[] b = new byte[8192]; int n; while ((n = i.read(b)) > 0) bo.write(b, 0, n); }
+        String s = bo.toString("UTF-8");
+        if (code >= 400) throw new Exception("드라이브 " + code + (code == 403 ? " (권한)" : code == 401 ? " (로그인)" : ""));
+        return s;
+    }
+
+    /** 복사하면서 1초마다 화면에 진행률을 알린다 */
+    void copy(InputStream in, OutputStream os, long size, String step) throws Exception {
+        byte[] b = new byte[256 * 1024];
+        long done = 0, last = 0;
+        int n;
+        while ((n = in.read(b)) > 0) {
+            os.write(b, 0, n);
+            done += n;
+            long now = System.currentTimeMillis();
+            if (step != null && size > 0 && now - last > 1000) {
+                last = now;
+                String msg = "드라이브에 올리는 중 " + step + " · " + (done * 100 / size) + "%";
+                runOnUiThread(() -> web.evaluateJavascript("window.App&&App.progress&&App.progress(" + JSONObject.quote(msg) + ")", null));
+            }
+        }
     }
 
     String explain(ApiException e) {

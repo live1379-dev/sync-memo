@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.3.8';
+  const VERSION = '1.4.0';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -87,7 +87,7 @@ const App = (() => {
     rec.tags = rec.locked ? [] : [...new Set([...text.matchAll(TAG_RE)].map(m => m[2]))];
     const total = (html.match(/data-checked="(true|false)"/g) || []).length;
     rec.chk = total ? [(html.match(/data-checked="true"/g) || []).length, total] : null;
-    rec.hasMedia = /<(img|audio)\b/i.test(html);
+    rec.hasMedia = /<(img|audio)\b|data-file=/i.test(html);
   }
   function newNoteRec(html = '<p><br></p>') { // 새 메모는 본문 크기로 시작 (제목 서식은 필요할 때만 — 오너 2026-11-05)
     const id = uid(), now = Date.now();
@@ -99,7 +99,7 @@ const App = (() => {
   // ───────── 정리 (sanitize) ─────────
   const KEEP = new Set('P DIV BR H1 H2 H3 B STRONG I EM U S STRIKE DEL MARK SPAN UL OL LI PRE CODE BLOCKQUOTE TABLE THEAD TBODY TR TD TH IMG A AUDIO HR SUB SUP'.split(' '));
   const DROP = new Set('SCRIPT STYLE IFRAME OBJECT EMBED LINK META TITLE FORM INPUT BUTTON TEXTAREA SELECT SVG MATH NOSCRIPT TEMPLATE VIDEO CANVAS'.split(' '));
-  const CLS = /^(checklist|hl-(yellow|green|blue|pink|purple)|tc-(red|orange|green|blue|purple)|fz-[1-7]|att|lbl|drawing|tag)$/;
+  const CLS = /^(checklist|hl-(yellow|green|blue|pink|purple)|tc-(red|orange|green|blue|purple)|fz-[1-7]|att|lbl|drawing|tag|file)$/;
   function sanitize(html) {
     const d = new DOMParser().parseFromString('<body>' + (html || '') + '</body>', 'text/html');
     clean(d.body);
@@ -115,7 +115,7 @@ const App = (() => {
       for (const a of [...el.attributes]) {
         const n = a.name;
         const ok = n === 'class' || n === 'alt' || n === 'colspan' || n === 'rowspan'
-          || (n === 'data-checked' && t === 'LI') || (n === 'data-note' && t === 'A') || (n === 'href' && t === 'A')
+          || (n === 'data-checked' && t === 'LI') || ((n === 'data-note' || n === 'data-file') && t === 'A') || (n === 'href' && t === 'A')
           || (/^data-(strokes|w|h)$/.test(n) && t === 'IMG') || (n === 'src' && (t === 'IMG' || t === 'AUDIO'))
           || (n === 'controls' && t === 'AUDIO') || (n === 'contenteditable' && t === 'DIV');
         if (!ok) el.removeAttribute(n);
@@ -1384,6 +1384,9 @@ const App = (() => {
       { label: '폴더로 이동…', act: () => moveDialog([n]) },
       Native.platform === 'mac' && { label: '새 창에서 열기', act: () => { saveNow(); Native.call('openWindow', { id: n.id, title: n.title || '메모' }).catch(() => {}); } },
       (!n.locked || unlocked.has(n.id)) && { label: '복제', act: () => duplicate(n) },
+      Native.platform === 'android' && !n.locked && 'hr',
+      Native.platform === 'android' && !n.locked && { label: '회의록 만들기 (Claude)', act: () => askClaude(n, '회의록') },
+      Native.platform === 'android' && !n.locked && { label: '콘티 준비하기 (Claude)', act: () => askClaude(n, '콘티') },
       { cap: '메모 색상' },
       chips(COLORS, k => setColor(n, k), n.color, () => setColor(n, null)),
       'hr',
@@ -1472,7 +1475,7 @@ const App = (() => {
       const b = e.target.closest('button'); if (!b || cur()?.trashedAt) return;
       ({
         format: () => formatMenu(b), checklist: toggleChecklist, table: () => insertTable(),
-        image: () => $('#fileImage').click(), draw: () => Draw.open(), record: recordDialog, link: linkDialog,
+        image: () => $('#fileImage').click(), draw: () => Draw.open(), record: recordDialog, link: linkDialog, attach: attachFiles,
         undo: () => undoRedo('undo'), redo: () => undoRedo('redo'),
       })[b.dataset.cmd]?.();
     };
@@ -1597,13 +1600,14 @@ const App = (() => {
       try { const c = JSON.parse(decodeURIComponent(escape(atob(h[1])))); await DB.setMeta('gcfg', c); toast('동기화 설정을 받았어요 — 설정에서 "구글 연결"을 누르세요', 5000); } catch { toast('설정 링크가 올바르지 않아요'); }
       history.replaceState(null, '', location.pathname);
     }
-    if (['new', 'title', 'text', 'url'].some(k => u.searchParams.has(k))) { history.replaceState(history.state, '', location.pathname); await launch(u.searchParams); }
+    if (['new', 'title', 'text', 'url', 'files'].some(k => u.searchParams.has(k))) { history.replaceState(history.state, '', location.pathname); await launch(u.searchParams); }
   }
   // 새 메모·공유받기 — 주소(?new= / ?text=) 또는 네이티브 앱(이미 열린 상태)에서 호출
   async function launch(params) {
     if (typeof params === 'string') params = new URLSearchParams(params);
     const shared = ['title', 'text', 'url'].some(k => params.has(k));
-    if (!params.has('new') && !shared) return;
+    if (!params.has('new') && !shared && !params.has('files')) return;
+    if (params.has('files')) return shareFiles();
     if (isMobile() && app.dataset.pane === 'edit') await new Promise(r => { addEventListener('popstate', () => r(), { once: true }); history.back(); });
     if (shared) {
       const title = params.get('title') || '', text = params.get('text') || '', link = params.get('url') || '';
@@ -1615,6 +1619,74 @@ const App = (() => {
       const t = TEMPLATES.find(x => x.name === params.get('new'));
       await newNote(t ? t.html() : undefined);
     }
+  }
+
+  // ───────── 첨부 파일 (드라이브 '싱크 메모 첨부' 폴더) · Claude 요청 ─────────
+  const fmtSize = b => b >= 1e9 ? (b / 1e9).toFixed(1) + 'GB' : b >= 1e6 ? (b / 1e6).toFixed(1) + 'MB' : b >= 1e3 ? Math.round(b / 1e3) + 'KB' : b + 'B';
+  const fileChip = f => `<p><a class="file" data-file="${esc(f.id)}" href="https://drive.google.com/file/d/${encodeURIComponent(f.id)}/view">📎 ${esc(f.name)}${f.size > 0 ? ' · ' + fmtSize(f.size) : ''}</a></p>`;
+  const chipFiles = html => [...new DOMParser().parseFromString('<body>' + (html || '') + '</body>', 'text/html').querySelectorAll('a[data-file]')]
+    .map(a => ({ id: a.dataset.file, name: a.textContent.replace(/^📎\s*/, '').replace(/ · [\d.]+(B|KB|MB|GB)$/, '') }));
+  function progress(msg) { toast(msg, 600000); }
+  // 네이티브가 들고 있는 파일(공유받음·고름)을 드라이브에 올려 메모 끝에 칩으로 붙인다
+  async function uploadInto(n) {
+    progress('드라이브에 올리는 중…');
+    let files;
+    try { files = await Native.call('files.upload'); } catch (e) { return toast('올리지 못했어요 — ' + e.message, 6000); }
+    if (!files?.length) { $('#toast').hidden = true; return; }
+    const html = files.map(fileChip).join('');
+    if (n.id === curId && !n.trashedAt) { editor.insertAdjacentHTML('beforeend', html + '<p><br></p>'); afterEdit(); await saveNow(); }
+    else { n.html = (n.html || '') + html; derive(n); await persist(n); renderList(); }
+    toast(`첨부 ${files.length}개를 드라이브에 올렸어요`, 3500);
+  }
+  async function attachFiles() {
+    const n = cur(); if (!n) return;
+    if (!Native.available || Native.platform !== 'android') return toast('파일 첨부는 폰 앱에서 할 수 있어요');
+    await saveNow();
+    let picked; try { picked = await Native.call('files.pick'); } catch (e) { return toast(e.message); }
+    if (picked?.length) uploadInto(n);
+  }
+  async function shareFiles() {
+    let list = []; try { list = await Native.call('files.pending'); } catch {}
+    if (!list.length) return;
+    if (isMobile() && app.dataset.pane === 'edit') await saveNow();
+    const recent = notes().filter(n => !n.trashedAt && !n.locked).sort((a, b) => (b.editedAt || b.updatedAt) - (a.editedAt || a.updatedAt)).slice(0, 8);
+    openModal(`<h3>어느 메모에 붙일까요?</h3><p>${list.map(f => esc(f.name) + (f.size > 0 ? ' · ' + fmtSize(f.size) : '')).join('<br>')}</p><div class="pick">
+      <button data-new>+ 새 메모</button>
+      ${recent.map(n => `<button data-id="${esc(n.id)}">${esc(n.title || '새 메모')}</button>`).join('')}</div><div class="acts"><button data-x>취소</button></div>`, (sh, close) => {
+      sh.querySelector('[data-x]').onclick = close;
+      sh.querySelectorAll('[data-id],[data-new]').forEach(b => b.onclick = async () => {
+        close();
+        let n;
+        if (b.hasAttribute('data-new')) { n = newNoteRec(`<h1>${esc(list[0].name.replace(/\.[^.]+$/, ''))}</h1><p><br></p>`); recs.set(n.key, n); await persist(n); }
+        else n = recs.get('note-' + b.dataset.id);
+        await openNote(n.id); renderSide();
+        uploadInto(n);
+      });
+    });
+  }
+  // 길게 누르기 → 회의록 만들기 / 콘티 준비하기: 메모 내용 + 첨부 목록을 드라이브 'Claude 요청' 폴더로 → 맥의 Claude 가 받아 처리
+  const CLAUDE_KINDS = {
+    회의록: { what: '회의록을 만들어', back: '‘회의록’ 폴더에 메모로 들어와요' },
+    콘티: { what: '콘티를 준비해(링크·악보 PDF·스테이지)', back: '링크는 ‘콘티’ 메모로, 악보 PDF 는 맥 콘티 폴더에 생겨요' },
+  };
+  async function askClaude(n, kind) {
+    if (n.id === curId) await saveNow();
+    const k = CLAUDE_KINDS[kind], files = chipFiles(n.html);
+    const ok = await ask({
+      title: kind === '회의록' ? '회의록 만들기' : '콘티 준비하기',
+      desc: `「${esc(n.title || '메모')}」 메모${files.length ? `와 첨부 ${files.length}개(${files.map(f => esc(f.name)).join(', ')})` : ''}를 Claude 에게 보내 ${k.what} 달라고 합니다. 끝나면 ${k.back}.`
+        + (kind === '회의록' && !files.length ? '<br><b>첨부한 녹음·전사가 없어요</b> — 메모만으로 만듭니다.' : ''),
+      ok: '보내기',
+    });
+    if (!ok) return;
+    const d = new Date(), p2 = x => String(x).padStart(2, '0');
+    const stamp = `${String(d.getFullYear()).slice(2)}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+    const body = { v: 1, kind, title: n.title || '', text: textOf(n.html || ''), files, noteId: n.id, createdAt: n.createdAt, editedAt: n.editedAt || n.updatedAt, sentAt: Date.now() };
+    progress('Claude 에게 보내는 중…');
+    try {
+      await Native.call('claude.request', { name: `${stamp} ${kind} ${(n.title || '메모').replace(/[\\/:*?"<>|]/g, ' ').slice(0, 60)}.json`, json: JSON.stringify(body) });
+      toast(`보냈어요 — 맥에서 ${kind} 작업을 시작합니다`, 4000);
+    } catch (e) { toast('보내지 못했어요 — ' + e.message, 6000); }
   }
 
   async function purgeOld() {
@@ -1647,6 +1719,6 @@ const App = (() => {
     if (Native.platform === 'mac') { pullInbox(); setInterval(pullInbox, 15000); addEventListener('focus', pullInbox); }
   }
 
-  return { init, uid, onRemoteChange, launch, flush: () => saveNow(), setSysDark, toggleSide, fmt, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, importData, saveNow, lockAll } };
+  return { init, uid, onRemoteChange, launch, progress, flush: () => saveNow(), setSysDark, toggleSide, fmt, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, chipFiles, fileChip, importData, saveNow, lockAll } };
 })();
 App.init();
