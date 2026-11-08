@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.6';
+  const VERSION = '1.4.7';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1612,6 +1612,18 @@ const App = (() => {
       if (m && !e.altKey && (e.code === 'Equal' || e.key === '+')) { e.preventDefault(); fmt('bigger'); return; }
       if (m && !e.altKey && e.code === 'Minus') { e.preventDefault(); fmt('smaller'); return; }
     });
+    // 복사·잘라내기: 브라우저 기본은 문단마다 빈 줄이 더 붙고(innerText) 화면 색이 style 로 따라간다 → 공유와 같은 글자 + 색 없는 서식
+    const copyOut = (e, cut) => {
+      const s = getSelection();
+      if (!e.clipboardData || !s.rangeCount || s.isCollapsed || !editor.contains(s.getRangeAt(0).commonAncestorContainer)) return;
+      const d = document.createElement('div'); d.append(s.getRangeAt(0).cloneContents());
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', plainText(d));
+      e.clipboardData.setData('text/html', sanitize(d.innerHTML));
+      if (cut) { document.execCommand('delete'); afterEdit(); }
+    };
+    editor.addEventListener('copy', e => copyOut(e, false));
+    editor.addEventListener('cut', e => copyOut(e, true));
     editor.addEventListener('paste', e => {
       const dt = e.clipboardData; if (!dt) return;
       const imgs = [...dt.files].filter(f => f.type.startsWith('image/'));

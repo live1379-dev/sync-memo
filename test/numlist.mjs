@@ -79,6 +79,23 @@ check('더 내어쓸 게 없으면 그대로', !(await html()).includes('blockqu
 await p.keyboard.press('End'); await p.keyboard.press('Enter'); await p.keyboard.type('1. 하나'); await p.keyboard.press('Enter'); await p.keyboard.type('둘'); await p.keyboard.press('Tab');
 h = await html();
 check('목록 안 탭은 하위 목록', /<li>하나<ol><li>둘<\/li><\/ol><\/li>|<ol><li>하나<\/li><ol><li>둘/.test(h), h);
+// 복사: 줄바꿈 한 줄씩, 화면 색 style 없이 (다크 모드)
+await p.emulateMedia({ colorScheme: 'dark' });
+await p.tap('#btnNewE'); await p.waitForTimeout(300);
+for (const t of ['261108 코어회의', '', '1. 샤밭메뉴']) { await p.keyboard.type(t); await p.keyboard.press('Enter'); }
+await p.keyboard.type('마라탕');
+await p.keyboard.press('Enter'); await p.keyboard.press('Enter'); await p.keyboard.type('야채볶음밥');
+const clip = async type => p.evaluate(type => {
+  const ed = document.getElementById('editor'); ed.focus();
+  const r = document.createRange(); r.selectNodeContents(ed); getSelection().removeAllRanges(); getSelection().addRange(r);
+  const dt = new DataTransfer(); const ev = new ClipboardEvent(type, { clipboardData: dt, bubbles: true, cancelable: true });
+  ed.dispatchEvent(ev); return { text: dt.getData('text/plain'), html: dt.getData('text/html'), handled: ev.defaultPrevented, left: ed.innerText.trim() };
+}, type);
+let c = await clip('copy');
+check('복사 글자: 줄바꿈 한 줄씩(빈 줄은 원래 빈 줄만)', c.text === '261108 코어회의\n\n샤밭메뉴\n마라탕\n야채볶음밥', JSON.stringify(c.text));
+check('복사 서식: 배경·글자색 style 없음', c.handled && c.html.includes('<ol>') && !/style=/.test(c.html), c.html);
+c = await clip('cut');
+check('잘라내기: 글자 넣고 메모에서 지움', c.text.startsWith('261108') && c.left === '', JSON.stringify(c.left));
 check('페이지 오류 없음', !errs.length, errs.join(' / '));
 console.log(`\n${res.filter(Boolean).length}/${res.length} 통과 (${wk ? 'webkit' : 'chrome'})`);
 await b.close(); srv.close(); process.exit(res.every(Boolean) ? 0 : 1);
