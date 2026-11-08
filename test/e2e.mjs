@@ -250,6 +250,15 @@ try {
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await B.p.waitForTimeout(800);
   check('폰: 목록 맨 위에서 당겨 놓으면 동기화', pbox.vis && ready && (await B.p.evaluate(() => window.__runs)) >= 1, JSON.stringify({ ...pbox, ready, runs: await B.p.evaluate(() => window.__runs) }));
+  // 공유 글자: 한 줄 = 줄바꿈 하나 (오너 2026-11-08 "공유하면 줄바꿈이 두 개씩")
+  const pt = await A.p.evaluate(() => [
+    '<p>제목</p><p><br></p><p>[공지]</p><p>* 하나</p><p>* 둘</p>',
+    '<p>가<br>나</p><p><br></p><p><br></p><p>다</p>',
+    '<ul class="checklist"><li data-checked="true">우유</li><li data-checked="false">빵</li></ul><blockquote><p>인용</p></blockquote><p>끝</p>',
+  ].map(App._test.plainText));
+  check('공유 글자: 넘겨 넣은 메모 줄바꿈 하나씩 · 빈 줄 유지', pt[0] === '제목\n\n[공지]\n* 하나\n* 둘', JSON.stringify(pt[0]));
+  check('공유 글자: 줄 안 <br> · 빈 줄 두 개 그대로', pt[1] === '가\n나\n\n\n다', JSON.stringify(pt[1]));
+  check('공유 글자: 체크리스트·인용 안 문단 빈 줄 없음', pt[2] === '우유\n빵\n인용\n끝', JSON.stringify(pt[2]));
   // 11-0. 링크 자동 인식: 주소 + 스페이스 / 주소 + 엔터
   await A.p.click('#btnNew');
   await A.p.keyboard.type('링크 테스트'); await A.p.keyboard.press('Enter');

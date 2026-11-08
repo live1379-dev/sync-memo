@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.2';
+  const VERSION = '1.4.3';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -77,6 +77,29 @@ const App = (() => {
   function textOf(html) {
     const d = new DOMParser().parseFromString('<body>' + html.replace(/<\/(p|div|h[1-6]|li|pre|tr|blockquote)>|<br\s*\/?>/gi, '$&\n') + '</body>', 'text/html');
     return d.body.textContent || '';
+  }
+  // 공유용 글자 — 화면에 보이는 줄 그대로. innerText 는 문단마다 빈 줄을 하나 더 넣어
+  // 한 줄 = 한 문단인 메모(맥에서 넘겨 넣은 회의록·공지 등)를 공유하면 줄바꿈이 두 번씩 됐다(오너 2026-11-08)
+  function plainText(root) {
+    const BLOCK = /^(P|DIV|H[1-6]|LI|PRE|BLOCKQUOTE|TR)$/, out = [];
+    let line = '';
+    const flush = () => { out.push(line); line = ''; };
+    const walk = node => {
+      for (const c of node.childNodes) {
+        if (c.nodeType === 3) line += c.nodeValue.replace(/\n/g, node.closest?.('pre') ? '\n' : ' ');
+        else if (c.nodeName === 'BR') { if (c.nextSibling) flush(); } // 문단 끝 <br> 은 빈 줄 자리표시라 줄을 하나 더 만들지 않는다
+        else if (c.nodeType === 1) {
+          const block = BLOCK.test(c.nodeName);
+          if ((block || /^(UL|OL|TABLE)$/.test(c.nodeName)) && line) flush();
+          if (/^(TD|TH)$/.test(c.nodeName) && c.previousElementSibling) line += '\t';
+          walk(c);
+          if (block && (line || !c.querySelector('p,div,h1,h2,h3,h4,h5,h6,li,pre,blockquote,tr'))) flush(); // 안에 문단이 있던 껍데기는 줄을 더 만들지 않는다
+        }
+      }
+    };
+    walk(root);
+    if (line) flush();
+    return out.join('\n').replace(/^\n+|\s+$/g, '');
   }
   function derive(rec, text) {
     const html = rec.locked ? (unlocked.get(rec.id) || '') : (rec.html || '');
@@ -1246,7 +1269,7 @@ const App = (() => {
   async function share() {
     const n = cur(); if (!n) return;
     await saveNow();
-    const text = editor.innerText;
+    const text = plainText(editor);
     if (Native.available) { Native.call('share', { title: n.title || '메모', text }).catch(() => {}); return; }
     if (navigator.share) { try { await navigator.share({ title: n.title || '메모', text }); } catch {} }
     else { await navigator.clipboard.writeText(text); toast('텍스트를 복사했어요'); }
@@ -1807,6 +1830,6 @@ const App = (() => {
     if (Native.platform === 'mac') { pullInbox(); setInterval(pullInbox, 15000); addEventListener('focus', pullInbox); }
   }
 
-  return { init, uid, onRemoteChange, launch, progress, flush: () => saveNow(), setSysDark, toggleSide, fmt, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, chipFiles, fileChip, importData, saveNow, lockAll } };
+  return { init, uid, onRemoteChange, launch, progress, flush: () => saveNow(), setSysDark, toggleSide, fmt, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, plainText: h => { const d = document.createElement('div'); d.innerHTML = h; return plainText(d); }, sanitize, chipFiles, fileChip, importData, saveNow, lockAll } };
 })();
 App.init();
