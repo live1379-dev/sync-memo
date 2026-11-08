@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.4';
+  const VERSION = '1.4.5';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -138,7 +138,7 @@ const App = (() => {
       for (const a of [...el.attributes]) {
         const n = a.name;
         const ok = n === 'class' || n === 'alt' || n === 'colspan' || n === 'rowspan'
-          || (n === 'data-checked' && t === 'LI') || ((n === 'data-note' || n === 'data-file') && t === 'A') || (n === 'href' && t === 'A')
+          || (n === 'data-checked' && t === 'LI') || (n === 'start' && t === 'OL') || ((n === 'data-note' || n === 'data-file') && t === 'A') || (n === 'href' && t === 'A')
           || (/^data-(strokes|w|h)$/.test(n) && t === 'IMG') || (n === 'src' && (t === 'IMG' || t === 'AUDIO'))
           || (n === 'controls' && t === 'AUDIO') || (n === 'contenteditable' && t === 'DIV');
         if (!ok) el.removeAttribute(n);
@@ -445,6 +445,29 @@ const App = (() => {
     }
   }
   function exec(cmd, val) { restoreSel(); document.execCommand(cmd, false, val); afterEdit(); }
+  function autoNumber() {
+    const sel = getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return false;
+    const blk = caretEl('p,div,h1,h2,h3');
+    if (!blk || blk.parentElement !== editor || blk.querySelector('img,table,audio,div')) return false;
+    const m = blk.textContent.match(/^(\d{1,3})[.)][ \u00a0]+/);
+    if (!m) return false;
+    const tail = document.createRange(); tail.setStart(sel.anchorNode, sel.anchorOffset); tail.setEndAfter(blk);
+    if (tail.toString().trim()) return false; // 글 중간에서 엔터는 그냥 줄바꿈
+    const c = blk.cloneNode(true);
+    let cut = m[0].length;
+    const w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT);
+    for (let t; cut > 0 && (t = w.nextNode());) { const k = Math.min(cut, t.data.length); t.data = t.data.slice(k); cut -= k; }
+    const body = c.innerHTML.replace(/^(<br>)+$/, '') || '<br>';
+    const n = Number(m[1]);
+    const all = document.createRange(); all.selectNode(blk);
+    sel.removeAllRanges(); sel.addRange(all);
+    document.execCommand('insertHTML', false, `<ol${n > 1 ? ` start="${n}"` : ''}><li>${body}</li><li><br></li></ol>`);
+    const li = caretEl('ol')?.lastElementChild || [...editor.querySelectorAll('ol')].pop()?.lastElementChild;
+    if (li) { const r = document.createRange(); r.setStart(li, 0); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
+    autoNumber.just = true; // 바로 되돌리면 줄 전체 선택이 남는다 → 글 끝으로
+    return true;
+  }
   // ───────── 링크 자동 인식 ─────────
   const URL_RE = /https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)\]}>]/g;
   function caretOffset(block) {
@@ -1395,6 +1418,7 @@ const App = (() => {
     ]);
     const newBtn = $('#btnNew');
     newBtn.onclick = () => newNote();
+    $('#btnNewE').onclick = () => newNote();
     newBtn.oncontextmenu = e => { e.preventDefault(); templateMenu(newBtn); };
     const fab = $('#fab');
     fab.onclick = () => newNote();
@@ -1526,6 +1550,12 @@ const App = (() => {
       try { const n = await importData(JSON.parse(await f.text())); toast(`메모 ${n}개를 가져왔어요` + (importData.fixed ? ` · ${importData.fixed}개 날짜 복구` : '')); } catch (err) { toast('가져오기 실패: ' + err.message); }
     };
 
+    // "1. 글" 끝에서 엔터 → 번호 목록으로 바꾸고 다음 줄 "2." (한 번의 편집이라 되돌리기 한 번이면 원래 글자로)
+    editor.addEventListener('beforeinput', e => { if (e.inputType === 'insertParagraph' && e.cancelable && autoNumber()) { e.preventDefault(); afterEdit(); } });
+    editor.addEventListener('input', e => {
+      if (autoNumber.just && e.inputType === 'historyUndo') { const s = getSelection(); if (s.rangeCount && !s.isCollapsed) s.collapseToEnd(); }
+      if (e.inputType !== 'insertHTML') autoNumber.just = false;
+    });
     editor.addEventListener('input', e => { normalizeChecklists(e.inputType === 'insertParagraph'); autoLink(e); scheduleSave(); touchLock(); });
     editor.addEventListener('blur', () => { saveNow(); if (deferReload) setTimeout(() => { if (document.activeElement !== editor) renderEditor(); }, 0); });
     editor.addEventListener('click', e => {

@@ -306,3 +306,7 @@ html:not(.native-android) #toolbar [data-cmd="attach"] { display: none; }
 #btnToList { white-space: nowrap; flex: none; }
 #editMeta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 @media (max-width: 400px) { #editMeta { display: none; } }
+/* 메모만 보이는 화면(폰 메모 화면·맥 메모 새 창)에도 새 메모 버튼 */
+#btnNewE { display: none; }
+#app.single #btnNewE { display: inline-flex; }
+@media (max-width: 760px) { #app[data-pane="edit"] #btnNewE { display: inline-flex; } }
