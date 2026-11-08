@@ -59,6 +59,26 @@ await p.keyboard.press('Enter');
 h = await html();
 check('글 중간 엔터는 그냥 줄바꿈', (h.match(/<ol/g) || []).length === 1, h);
 
+// 탭 = 들여쓰기 (일반 줄)
+await p.tap('#btnNewE'); await p.waitForTimeout(300);
+await p.keyboard.type('첫 줄'); await p.keyboard.press('Enter'); await p.keyboard.type('들여쓸 줄');
+await p.keyboard.press('Tab');
+h = await html();
+check('일반 줄 탭 → 들여쓰기', /<blockquote class="ind"><p>들여쓸 줄<\/p><\/blockquote>/.test(h) || /<blockquote class="ind">들여쓸 줄<\/blockquote>/.test(h), h);
+check('포커스는 편집칸에 그대로', await p.evaluate(() => document.activeElement.id === 'editor'));
+const ml = await p.$eval('#editor blockquote', e => getComputedStyle(e).marginLeft + '/' + getComputedStyle(e).borderLeftWidth);
+check('인용문(세로줄) 아닌 들여쓰기 모양', ml.startsWith('3') && ml.endsWith('/0px'), ml);
+await p.evaluate(() => App._test.saveNow());
+const saved = await p.evaluate(() => [...App._test.recs().values()].find(r => (r.html || '').includes('들여쓸 줄'))?.html || '');
+check('저장 후에도 들여쓰기 표시 유지', saved.includes('blockquote class="ind"'), saved);
+await p.keyboard.press('Shift+Tab');
+h = await html();
+check('Shift+탭 → 내어쓰기', !h.includes('blockquote') && h.includes('들여쓸 줄'), h);
+await p.keyboard.press('Shift+Tab');
+check('더 내어쓸 게 없으면 그대로', !(await html()).includes('blockquote'));
+await p.keyboard.press('End'); await p.keyboard.press('Enter'); await p.keyboard.type('1. 하나'); await p.keyboard.press('Enter'); await p.keyboard.type('둘'); await p.keyboard.press('Tab');
+h = await html();
+check('목록 안 탭은 하위 목록', /<li>하나<ol><li>둘<\/li><\/ol><\/li>|<ol><li>하나<\/li><ol><li>둘/.test(h), h);
 check('페이지 오류 없음', !errs.length, errs.join(' / '));
 console.log(`\n${res.filter(Boolean).length}/${res.length} 통과 (${wk ? 'webkit' : 'chrome'})`);
 await b.close(); srv.close(); process.exit(res.every(Boolean) ? 0 : 1);

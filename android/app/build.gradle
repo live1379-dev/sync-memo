@@ -6,8 +6,8 @@ android {
         applicationId "net.live1379.syncmemo"
         minSdk 29
         targetSdk 34
-        versionCode 18
-        versionName "1.4.5"
+        versionCode 19
+        versionName "1.4.6"
     }
     buildTypes {
         release {

@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.5';
+  const VERSION = '1.4.6';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -122,7 +122,7 @@ const App = (() => {
   // ───────── 정리 (sanitize) ─────────
   const KEEP = new Set('P DIV BR H1 H2 H3 B STRONG I EM U S STRIKE DEL MARK SPAN UL OL LI PRE CODE BLOCKQUOTE TABLE THEAD TBODY TR TD TH IMG A AUDIO HR SUB SUP'.split(' '));
   const DROP = new Set('SCRIPT STYLE IFRAME OBJECT EMBED LINK META TITLE FORM INPUT BUTTON TEXTAREA SELECT SVG MATH NOSCRIPT TEMPLATE VIDEO CANVAS'.split(' '));
-  const CLS = /^(checklist|hl-(yellow|green|blue|pink|purple)|tc-(red|orange|green|blue|purple)|fz-[1-7]|att|lbl|drawing|tag|file)$/;
+  const CLS = /^(checklist|hl-(yellow|green|blue|pink|purple)|tc-(red|orange|green|blue|purple)|fz-[1-7]|att|lbl|drawing|tag|file|ind)$/;
   function sanitize(html) {
     const d = new DOMParser().parseFromString('<body>' + (html || '') + '</body>', 'text/html');
     clean(d.body);
@@ -556,6 +556,8 @@ const App = (() => {
   let madeFromFont = [];
   function fixColors() {
     madeFromFont = [];
+    // 일반 줄 들여쓰기(execCommand indent)는 여백 style 붙은 blockquote → 저장 때 style 이 지워져 인용문으로 보였다. 들여쓰기 표시(ind)로
+    editor.querySelectorAll('blockquote[style]').forEach(b => { if (/margin/.test(b.getAttribute('style'))) { b.classList.add('ind'); b.removeAttribute('style'); } });
     HLN = HLN || Object.fromEntries(Object.entries(HL).map(([k, v]) => [norm(v), k]));
     TCN = TCN || Object.fromEntries(Object.entries(TC).map(([k, v]) => [norm(v), k]));
     editor.querySelectorAll('font').forEach(f => {
@@ -1600,6 +1602,7 @@ const App = (() => {
           return;
         }
         if (caretEl('li')) { e.preventDefault(); exec(e.shiftKey ? 'outdent' : 'indent'); return; }
+        if (!caretEl('pre')) { e.preventDefault(); if (!e.shiftKey || caretEl('blockquote.ind')) exec(e.shiftKey ? 'outdent' : 'indent'); return; } // 일반 줄도 탭 = 들여쓰기
       }
       if (m && e.shiftKey && !e.altKey) {
         const k = { KeyT: 'h1', KeyH: 'h2', KeyJ: 'h3', KeyB: 'p', KeyM: 'pre', Digit7: 'ul', Digit9: 'ol', KeyL: 'check', KeyU: 'checkmark', KeyX: 'strike' }[e.code];
