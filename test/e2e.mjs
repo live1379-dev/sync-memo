@@ -20,8 +20,12 @@ const BASE = 'http://localhost:8799/';
 // ── 가짜 드라이브 ──
 const drive = { files: new Map(), seq: 0, tokenCalls: [] };
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
+// route 로 가로챈 요청은 setOffline 이어도 응답된다 → 실제 폰처럼 오프라인 기기의 요청은 네트워크 실패로 끊는다
+const downCtx = new WeakSet();
+async function setNet(ctx, off) { await ctx.setOffline(off); off ? downCtx.add(ctx) : downCtx.delete(ctx); }
 async function handle(route) {
   const req = route.request(), url = new URL(req.url()), m = req.method();
+  if (downCtx.has(req.frame().page().context())) return route.abort('internetdisconnected');
   if (m === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
   const json = (o, status = 200) => route.fulfill({ status, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify(o) });
   if (url.host === 'oauth2.googleapis.com') {
@@ -130,19 +134,24 @@ try {
   check('폰: 커서 둔 채로도 맥에서 고친 내용이 바로 반영 (커서 유지)', live.text.includes('맥추가') && live.focus, JSON.stringify(live));
 
   // 4. 둘 다 오프라인에서 같은 메모 수정 → 충돌 사본
-  await A.ctx.setOffline(true); await B.ctx.setOffline(true);
+  await setNet(A.ctx, true); await setNet(B.ctx, true);
   await A.p.click('.card');
   await endOfEditor(A.p); await A.p.keyboard.type(' A수정'); await save(A.p);
   await endOfEditor(B.p); await B.p.keyboard.type(' B수정'); await save(B.p);
   st = await sync(A.p);
   check('오프라인이면 상태 = offline, 기기에는 저장', st.status === 'offline' && (await A.p.evaluate(async () => (await DB.all()).some(r => r._dirty && (r.html || '').includes('A수정')))));
-  await A.ctx.setOffline(false); await B.ctx.setOffline(false);
+  await setNet(A.ctx, false); await setNet(B.ctx, false);
   await sync(A.p); await sync(B.p); await A.p.click('#q'); await sync(A.p);
   check('충돌: 양쪽 다 메모 2개(원본+충돌 사본)', (await noteCount(A.p)) === 2 && (await noteCount(B.p)) === 2, `${await noteCount(A.p)}/${await noteCount(B.p)}`);
   dn = driveNotes();
   const both = dn.map(d => d.data.html).join(' ');
   check('충돌: A수정·B수정 둘 다 보존', both.includes('A수정') && both.includes('B수정'));
   check('충돌 사본 표시', dn.some(d => d.data.html.includes('충돌 사본')));
+  // v1.4.4: 폰 웹뷰가 오래 뒤에 있다 오면 navigator.onLine 이 false 로 굳는다 — 네트워크가 멀쩡하면 그래도 동기화돼야 한다
+  await A.p.evaluate(() => Object.defineProperty(Navigator.prototype, 'onLine', { get: () => false, configurable: true }));
+  st = await sync(A.p);
+  await A.p.evaluate(() => delete Navigator.prototype.onLine || true).catch(() => {});
+  check('onLine 이 false 로 굳어도 네트워크 되면 동기화', st.status === 'synced', st.status);
 
   // 5. 체크리스트 (맥) — 체크하면 아래로
   await A.p.click('#btnNew');
@@ -348,7 +357,7 @@ try {
   await dp.reload();
   await dp.click('#btnNew'); await dp.keyboard.type('오프라인 메모'); await dp.keyboard.press('Enter'); await dp.keyboard.type('본문');
   await dp.evaluate(() => App._test.saveNow());
-  await D.setOffline(true);
+  await setNet(D, true);
   await dp.reload();
   check('오프라인 상태에서 앱 열림 + 메모 유지', (await dp.textContent('#notes')).includes('오프라인 메모'));
   check('오프라인 표시', (await dp.textContent('#syncText')).length > 0, await dp.textContent('#syncText'));

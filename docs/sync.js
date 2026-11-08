@@ -149,7 +149,7 @@ const Sync = (() => {
 
   // 한 번 동기화: 1) 원격의 새 버전 받기(갈라졌으면 사본) 2) 이 기기 변경 올리기 3) 반영 끝난 옛 버전 지우기
   async function runOnce() {
-    if (!navigator.onLine) { emit({ status: 'offline' }); return; }
+    // navigator.onLine 은 미리 보지 않는다 — 안드로이드 웹뷰는 오래 뒤에 있다 오면 false 로 굳어 있다. 실제로 접속해 보고 판단
     if (!(await auth())) { emit({ status: needsSetup(await cfg()) ? 'nosetup' : 'login' }); return; }
     emit({ status: 'syncing', error: '' });
     let changed = false;
@@ -216,7 +216,7 @@ const Sync = (() => {
         do { again = false; await runOnce(); } while (again);
       } catch (e) {
         if (e.code === 'login') emit({ status: 'login', error: e.message });
-        else if (!navigator.onLine) emit({ status: 'offline' });
+        else if (e instanceof TypeError || !navigator.onLine) emit({ status: 'offline' }); // fetch 네트워크 실패 = TypeError
         else emit({ status: 'error', error: e.message });
       } finally { running = null; }
     })();
