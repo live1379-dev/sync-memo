@@ -6,3 +6,7 @@ android/build/
 android/app/build/
 android/local.properties
 mac/build/
+배포/*.zip
+배포/SyncMemo-설치꾸러미/폰/
+배포/SyncMemo-설치꾸러미/맥/
+배포/SyncMemo-설치꾸러미/도구/맥메모-내보내기.js

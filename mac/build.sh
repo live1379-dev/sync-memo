@@ -13,8 +13,14 @@ if [[ -f $CLT_MM && -f ${CLT_MM:h}/bridging.modulemap ]]; then
   print -r -- "{\"version\":0,\"case-sensitive\":\"false\",\"roots\":[{\"type\":\"file\",\"name\":\"$CLT_MM\",\"external-contents\":\"$PWD/build/empty.modulemap\"}]}" > build/overlay.yaml
   OV="-vfsoverlay $PWD/build/overlay.yaml"
 fi
-swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos12" ${=OV} -o "$APP/Contents/MacOS/SyncMemo" main.swift \
-  -framework Cocoa -framework WebKit -framework Network -framework CryptoKit
+# ARCHS="arm64 x86_64" 로 부르면 애플 실리콘·인텔 겸용(유니버설) — 배포 꾸러미용. 기본은 이 맥 칩만.
+BINS=()
+for A in ${=${ARCHS:-$(uname -m)}}; do
+  swiftc -O -swift-version 5 -target "$A-apple-macos12" ${=OV} -o "build/SyncMemo-$A" main.swift \
+    -framework Cocoa -framework WebKit -framework Network -framework CryptoKit
+  BINS+=("build/SyncMemo-$A")
+done
+lipo -create "${BINS[@]}" -output "$APP/Contents/MacOS/SyncMemo"
 cp Info.plist "$APP/Contents/"
 rsync -a --exclude sw.js ../docs/ "$APP/Contents/Resources/www/"
 # 아이콘 (icon-1024.png → AppIcon.icns)

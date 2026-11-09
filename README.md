@@ -82,6 +82,11 @@ osascript -l JavaScript tools/export-apple-notes.js ~/Desktop/맥메모.json
 - 올리기는 안드로이드 네이티브가 드라이브 이어올리기(resumable)로 흘려 보낸다 — 1시간 녹음도 메모리에 다 싣지 않는다. 진행률은 화면 아래 알림.
 - 요청 JSON: `{kind: '회의록'|'콘티', title, text, files:[{id,name}], createdAt, editedAt, sentAt}`. 받는 쪽(맥의 처리기)은 이 저장소 밖(오너 작업공간)에 있다.
 
+## 다른 사람에게 전달 (설치 꾸러미)
+`zsh tools/make-package.sh` → `배포/SyncMemo-설치꾸러미.zip` (APK + 맥 유니버설 앱 + 설치 스크립트 + 단계별 설명서 + Claude 설치 지시서).
+받는 사람은 오너 구글 프로젝트를 같이 쓰고 메모는 본인 드라이브에 저장된다. 보내기 전 할 일은 `배포/오너-전달전-준비.md`.
+맥 빌드는 `ARCHS="arm64 x86_64" mac/build.sh` 로 인텔 겸용이 된다(기본은 이 맥 칩만).
+
 ## 업데이트 로그
 - v1.4.7 (2026-11-09) — **메모 글을 복사해 다른 곳에 붙이면 줄바꿈이 두 줄씩, 배경색까지 따라가던 문제.** 복사는 브라우저 기본(innerText·화면 색 인라인 style)이었다 → 복사·잘라내기 때 공유와 같은 `plainText` 글자 + 색 없는 정리된 HTML 을 직접 넣는다. 크롬 23/23(`test/numlist.mjs`) · 웹 61/61 · 반반 14/14 · 날짜 10/10.
 - v1.4.6 (2026-11-09) — **일반 줄에서도 탭 = 들여쓰기, Shift+탭 = 내어쓰기**(전엔 목록·표 안에서만). 일반 줄 들여쓰기(⌘] 포함)는 여백 style 붙은 `blockquote` 로 만들어지는데 저장 때 style 이 지워져 노란 세로줄 인용문으로 보였다 → 들여쓰기 표시 `blockquote.ind`(세로줄 없이 2em). 크롬 20/20(`test/numlist.mjs`) · 웹 61/61 · 반반 14/14 · 날짜 10/10.
