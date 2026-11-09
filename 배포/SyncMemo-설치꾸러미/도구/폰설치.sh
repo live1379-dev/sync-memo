@@ -3,7 +3,8 @@
 # 쓰는 법: zsh 도구/폰설치.sh [기기시리얼]
 # 끝 코드: 0 = 설치됨 / 2 = 사람이 할 일이 있음 / 1 = 실패
 ROOT="${0:A:h:h}"
-APK="$ROOT/폰/SyncMemo.apk"
+APK="$ROOT/폰/SyncMemo-내폰용.apk"
+[[ -f $APK ]] || { print "⏸ 내 폰용 앱이 아직 없습니다. 먼저: zsh 도구/폰앱-내키로-서명.sh"; exit 2; }
 ADB=$(command -v adb || ls /opt/homebrew/bin/adb /usr/local/bin/adb ~/Library/Android/sdk/platform-tools/adb 2>/dev/null | head -1)
 if [[ -z $ADB ]]; then
   print "⏸ adb 가 없습니다. 둘 중 하나:"
@@ -25,6 +26,10 @@ else
   S=${devs[1]}
 fi
 print "▶ $S 에 설치합니다"
-"$ADB" -s "$S" install -r "$APK" || exit 1
+if ! out=$("$ADB" -s "$S" install -r "$APK" 2>&1); then
+  print -r -- "$out"
+  [[ $out == *UPDATE_INCOMPATIBLE* ]] && { print "⏸ 다른 곳에서 받은 싱크 메모가 깔려 있습니다. 폰에서 그 앱을 지운 뒤 다시 실행하세요(그 폰의 메모가 드라이브에 올라가 있는지 먼저 확인)."; exit 2; }
+  exit 1
+fi
 v=$("$ADB" -s "$S" shell dumpsys package net.live1379.syncmemo | grep -m1 versionName | tr -d ' ')
 print "✅ 폰 설치 완료 ($v) — 앱을 열고 '구글 연결 필요 — 눌러서 연결' → 계정 고르기"
