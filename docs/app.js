@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.7';
+  const VERSION = '1.4.9';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1613,12 +1613,21 @@ const App = (() => {
       if (m && !e.altKey && e.code === 'Minus') { e.preventDefault(); fmt('smaller'); return; }
     });
     // 복사·잘라내기: 브라우저 기본은 문단마다 빈 줄이 더 붙고(innerText) 화면 색이 style 로 따라간다 → 공유와 같은 글자 + 색 없는 서식
+    // 갤럭시 클립보드는 복사한 HTML 을 글자로 바꾸며 문단마다 빈 줄을 더 넣는다(Html.fromHtml) → 앱 안에서 복사한 글이면 줄바꿈만 다른지 보고 원래 글자로
+    let lastCopy = '';
+    const sameAsCopy = t => lastCopy && t && t.replace(/\s+/g, '') === lastCopy.replace(/\s+/g, '') ? lastCopy : t;
+    editor.addEventListener('beforeinput', e => { // 키보드 클립보드로 붙이면 paste 가 아니라 글자 입력으로 들어온다
+      if (!e.cancelable || !/^insert(Text|ReplacementText|FromPaste)$/.test(e.inputType)) return;
+      const t = e.data ?? e.dataTransfer?.getData('text/plain');
+      if (t && t.includes('\n') && sameAsCopy(t) === lastCopy && t !== lastCopy) { e.preventDefault(); pastePlain(lastCopy); }
+    });
     const copyOut = (e, cut) => {
       const s = getSelection();
       if (!e.clipboardData || !s.rangeCount || s.isCollapsed || !editor.contains(s.getRangeAt(0).commonAncestorContainer)) return;
       const d = document.createElement('div'); d.append(s.getRangeAt(0).cloneContents());
       e.preventDefault();
-      e.clipboardData.setData('text/plain', plainText(d));
+      lastCopy = plainText(d);
+      e.clipboardData.setData('text/plain', lastCopy);
       e.clipboardData.setData('text/html', sanitize(d.innerHTML));
       if (cut) { document.execCommand('delete'); afterEdit(); }
     };
@@ -1630,7 +1639,7 @@ const App = (() => {
       if (imgs.length) { e.preventDefault(); insertImages(imgs); return; }
       // 붙여넣기는 서식(글자 크기·굵기·색)을 버리고 글자·줄바꿈만 — 오너 지시 2026-11-05
       const txt = dt.getData('text/plain') || textOf(sanitize(dt.getData('text/html') || ''));
-      if (txt) { e.preventDefault(); pastePlain(txt); }
+      if (txt) { e.preventDefault(); pastePlain(sameAsCopy(txt)); }
     });
     editor.addEventListener('drop', e => {
       const imgs = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image/'));
