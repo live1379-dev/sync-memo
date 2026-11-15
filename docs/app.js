@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.10';
+  const VERSION = '1.4.11';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1588,6 +1588,17 @@ const App = (() => {
         { label: '링크 복사', act: () => navigator.clipboard.writeText(a.href).then(() => toast('복사했어요')) },
         { label: '링크 지우기 (글자만 남기기)', act: () => { a.replaceWith(...a.childNodes); scheduleSave(); } },
       ]);
+    });
+    // 들여쓴 줄(blockquote.ind): 맨 앞 백스페이스·빈 줄 엔터 = 한 단계 내어쓰기 (폰엔 Shift+탭이 없다 — 오너 2026-11-15)
+    editor.addEventListener('beforeinput', e => {
+      if (!e.cancelable || !/^(deleteContentBackward|insertParagraph)$/.test(e.inputType)) return;
+      const s = getSelection(), bq = caretEl('blockquote.ind');
+      if (!bq || !s.rangeCount || !s.isCollapsed || caretEl('li,pre,td,th')) return;
+      const blk = caretEl('p,div:not(.att),h1,h2,h3'), host = blk && bq.contains(blk) ? blk : bq;
+      const r = document.createRange(); r.selectNodeContents(host); r.setEnd(s.anchorNode, s.anchorOffset);
+      if (r.toString() !== '' || (e.inputType === 'insertParagraph' && host.textContent.trim())) return;
+      e.preventDefault(); exec('outdent');
+      if ([null, editor].includes(caretEl('p,div:not(.att),h1,h2,h3,blockquote'))) { document.execCommand('formatBlock', false, '<p>'); afterEdit(); } // 빈 줄을 내어쓰면 문단 없이 <br> 만 남는다
     });
     editor.addEventListener('keydown', e => {
       const m = e.metaKey || e.ctrlKey;
