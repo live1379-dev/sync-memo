@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.9';
+  const VERSION = '1.4.10';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1628,7 +1628,8 @@ const App = (() => {
       e.preventDefault();
       lastCopy = plainText(d);
       e.clipboardData.setData('text/plain', lastCopy);
-      e.clipboardData.setData('text/html', sanitize(d.innerHTML));
+      // 안드로이드(갤럭시)는 HTML 이 같이 있으면 클립보드·다른 앱이 그걸 글자로 바꾸며 문단마다 빈 줄을 더 넣는다 → 폰에선 글자만 (앱 안 붙여넣기도 원래 글자만 쓴다)
+      if (!/Android/i.test(navigator.userAgent)) e.clipboardData.setData('text/html', sanitize(d.innerHTML));
       if (cut) { document.execCommand('delete'); afterEdit(); }
     };
     editor.addEventListener('copy', e => copyOut(e, false));
