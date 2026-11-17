@@ -1560,9 +1560,12 @@ const App = (() => {
     });
     editor.addEventListener('input', e => { normalizeChecklists(e.inputType === 'insertParagraph'); autoLink(e); scheduleSave(); touchLock(); });
     editor.addEventListener('blur', () => { saveNow(); if (deferReload) setTimeout(() => { if (document.activeElement !== editor) renderEditor(); }, 0); });
+    const checkHit = e => { const li = e.target.closest('ul.checklist > li'); return li && e.clientX - li.getBoundingClientRect().left < 28 && editor.isContentEditable ? li : null; };
+    // 체크 원을 누를 땐 편집기에 포커스가 안 가게 — 폰 키보드가 안 뜬다 (체크 자체는 click 에서)
+    editor.addEventListener('pointerdown', e => { if (checkHit(e)) e.preventDefault(); });
     editor.addEventListener('click', e => {
-      const li = e.target.closest('ul.checklist > li');
-      if (li && e.clientX - li.getBoundingClientRect().left < 28 && editor.isContentEditable) { e.preventDefault(); toggleCheck(li); return; }
+      const li = checkHit(e);
+      if (li) { e.preventDefault(); toggleCheck(li); return; }
       const a = e.target.closest('a');
       if (a) {
         e.preventDefault();
