@@ -410,6 +410,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             if let u = URL(string: a["url"] as? String ?? "") { NSWorkspace.shared.open(u) }
             reply(wv, id, true, nil)
         case "inbox.take": reply(wv, id, true, selftest != nil ? [] : takeInbox())
+        case "claude.request": // 우클릭 → 회의록 만들기/콘티 준비하기: 같은 맥의 처리기(watch.py)가 읽는 로컬 폴더에 요청 파일을 둔다
+            do {
+                // 자가검사는 진짜 처리기를 깨우지 않게 시험 폴더에만 쓴다
+                let dir = selftest.map { URL(fileURLWithPath: $0 + ".claude") } ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/SyncMemo/claude-requests")
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let name = (a["name"] as? String ?? "요청.json").replacingOccurrences(of: "/", with: " ")
+                try (a["json"] as? String ?? "{}").write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+                // 1분 주기를 기다리지 않게 처리기를 바로 깨운다 (등록 안 돼 있으면 조용히 실패 → 다음 주기에 처리)
+                if selftest == nil { let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+                p.arguments = ["kickstart", "gui/\(getuid())/com.caleb.syncmemo-claude"]; try? p.run() }
+                reply(wv, id, true, nil)
+            } catch { reply(wv, id, false, error.localizedDescription) }
         default: reply(wv, id, false, "알 수 없는 요청 \(method)")
         }
     }
@@ -511,6 +523,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         await App._test.saveNow();
         r.saved = [...App._test.recs().values()].some(x => x.kind === 'note' && (x.text || '').includes('59번째'));
         const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('pw'), 'PBKDF2', false, ['deriveKey']); r.pbkdf2 = !!k;
+        const card = document.querySelector('.card.on'); const cr = card.getBoundingClientRect();
+        card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: cr.left + 20, clientY: cr.top + 10 }));
+        await new Promise(res => setTimeout(res, 100));
+        r.menu = [...document.querySelectorAll('.mi')].map(b => b.textContent).filter(t => t.includes('Claude'));
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        r.claudeReq = await Native.call('claude.request', { name: '검사 콘티.json', json: JSON.stringify({ v: 1, kind: '콘티', title: '검사' }) }).then(() => true, e => String(e));
         r.noteId = document.querySelector('.card.on')?.dataset.id; r.sideW = Math.round(document.getElementById('side').getBoundingClientRect().width); r.fs = getComputedStyle(document.getElementById('editor')).fontSize;
         return JSON.stringify(r);
         """
