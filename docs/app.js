@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.3.8';
+  const VERSION = '1.3.9';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -27,7 +27,7 @@ const App = (() => {
 
   let recs = new Map();
   let view = { type: 'all' };
-  let curId = null, loadedVer = 0, pendingSave = false, saveTimer = null, deferReload = false;
+  let curId = null, loadedVer = 0, loadedHtml = null, pendingSave = false, saveTimer = null, deferReload = false, composing = false;
   let q = '';
   let prefs = { layout: 'list', sort: 'updated', checkedToBottom: true, theme: 'auto', sideHidden: true, fontSize: 'm' };
   const FS = { s: '14px', m: '15px', l: '17px' }, FSN = { s: '작게', m: '보통', l: '크게' };
@@ -44,7 +44,7 @@ const App = (() => {
   // 동기화가 저장소에 써 둔 로컬 전용 필드(_fileId·_base)를 메모리 사본에 합친다 — 안 하면 드라이브에 중복 파일이 생긴다
   async function fresh(rec) {
     const d = await DB.get(rec.key);
-    if (d) { rec._fileId = d._fileId || rec._fileId; rec._base = Math.max(d._base || 0, rec._base || 0); }
+    if (d) { rec._fileId = d._fileId || rec._fileId; if ((d._base || 0) >= (rec._base || 0)) { rec._baseHtml = d._baseHtml; rec._hist = d._hist; } rec._base = Math.max(d._base || 0, rec._base || 0); }
     return rec;
   }
   async function refreshMeta() {
@@ -343,8 +343,26 @@ const App = (() => {
     linkifyIn(editor); // 예전 메모의 주소 글자도 링크로 (저장은 다음 편집 때)
     if (SINGLE && Native.platform === 'mac') Native.call('setTitle', { title: n.title || '메모' }).catch(() => {});
     loadedVer = n.updatedAt;
+    loadedHtml = n.locked ? null : editor.innerHTML;
     deferReload = false;
   }
+  // 커서 위치를 글자 수로 기억했다가 다시 그린 뒤 되돌린다 (다른 기기 수정이 들어와도 쓰던 자리 유지)
+  function caretAt() {
+    const s = getSelection();
+    if (!s.rangeCount || !editor.contains(s.anchorNode)) return null;
+    const r = document.createRange(); r.selectNodeContents(editor); r.setEnd(s.anchorNode, s.anchorOffset);
+    return r.toString().length;
+  }
+  function setCaret(pos) {
+    if (pos == null) return;
+    const w = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let node, left = pos;
+    while ((node = w.nextNode())) {
+      if (left <= node.length) { const r = document.createRange(); r.setStart(node, left); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return; }
+      left -= node.length;
+    }
+  }
+  function redrawKeepCaret() { const p = caretAt(); renderEditor(); setCaret(p); }
   function focusStart() {
     editor.focus();
     const first = editor.firstElementChild || editor;
@@ -363,7 +381,12 @@ const App = (() => {
     pendingSave = false;
     const n = cur();
     if (!n || n.trashedAt) return;
-    const html = editor.innerHTML, text = editor.innerText;
+    let html = editor.innerHTML, text = editor.innerText;
+    // 편집하는 사이 다른 기기 수정이 들어왔으면 덮어쓰지 않고 합친다 (오너 2026-11-15)
+    if (!n.locked && n.updatedAt !== loadedVer && loadedHtml != null && (n.html || '') !== loadedHtml) {
+      const m = Merge.html(loadedHtml, html, n.html || '');
+      if (m !== html) { const p = caretAt(); editor.innerHTML = sanitize(m); setCaret(p); html = editor.innerHTML; text = editor.innerText; }
+    }
     if (n.locked) {
       if (!lockPw || !unlocked.has(n.id)) return;
       unlocked.set(n.id, html);
@@ -373,6 +396,7 @@ const App = (() => {
     derive(n, text);
     await persist(n);
     loadedVer = n.updatedAt;
+    if (!n.locked) loadedHtml = html;
     $('#editMeta').textContent = fmtLong(editedOf(n));
     renderList(); renderSide();
   }
@@ -1181,7 +1205,7 @@ const App = (() => {
         if (!f) { f = { kind: 'folder', id: uid(), name: n.folderName, color: 'yellow', order: folders().length, createdAt: Date.now() }; f.key = 'folder-' + f.id; await persist(f); byName.set(f.name, f); }
         folderId = f.id;
       }
-      const rec = { ...n, key: 'note-' + id, kind: 'note', id, folderId, html: n.locked ? '' : sanitize(n.html || ''), createdAt: n.createdAt || Date.now(), updatedAt: n.updatedAt || Date.now(), _fileId: ex?._fileId, _base: ex?._base };
+      const rec = { ...n, key: 'note-' + id, kind: 'note', id, folderId, html: n.locked ? '' : sanitize(n.html || ''), createdAt: n.createdAt || Date.now(), updatedAt: n.updatedAt || Date.now(), _fileId: ex?._fileId, _base: ex?._base, _baseHtml: ex?._baseHtml, _hist: ex?._hist };
       delete rec.folderName;
       derive(rec);
       if (n.locked) rec.title = n.title;
@@ -1487,6 +1511,8 @@ const App = (() => {
     };
 
     editor.addEventListener('input', e => { normalizeChecklists(e.inputType === 'insertParagraph'); autoLink(e); scheduleSave(); touchLock(); });
+    editor.addEventListener('compositionstart', () => { composing = true; });
+    editor.addEventListener('compositionend', () => { composing = false; });
     editor.addEventListener('blur', () => { saveNow(); if (deferReload) setTimeout(() => { if (document.activeElement !== editor) renderEditor(); }, 0); });
     editor.addEventListener('click', e => {
       const li = e.target.closest('ul.checklist > li');
@@ -1586,7 +1612,7 @@ const App = (() => {
     if (curId && (!n || n.purged)) { curId = null; renderEditor(); return; }
     if (n && n.updatedAt !== loadedVer && !pendingSave) {
       if (n.locked && unlocked.has(n.id) && lockPw) { try { unlocked.set(n.id, await decrypt(n.enc, lockPw)); } catch { unlocked.delete(n.id); } }
-      if (document.activeElement === editor) deferReload = true; else renderEditor();
+      if (document.activeElement !== editor) renderEditor(); else if (composing) deferReload = true; else redrawKeepCaret(); // 한글 조합 중엔 끝난 뒤에
     }
   }
 
@@ -1647,6 +1673,6 @@ const App = (() => {
     if (Native.platform === 'mac') { pullInbox(); setInterval(pullInbox, 15000); addEventListener('focus', pullInbox); }
   }
 
-  return { init, uid, onRemoteChange, launch, flush: () => saveNow(), setSysDark, toggleSide, fmt, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, importData, saveNow, lockAll } };
+  return { init, uid, derive, onRemoteChange, launch, flush: () => saveNow(), setSysDark, toggleSide, fmt, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, sanitize, importData, saveNow, lockAll } };
 })();
 App.init();

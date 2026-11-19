@@ -116,7 +116,7 @@ try {
   check('맥: 폰에서 고친 내용이 반영', (await A.p.textContent('#editor')).includes('그리고 빵'));
   check('폰 편집 후에도 드라이브 파일 1개 (중복 없음)', driveNotes().length === 1);
 
-  // 4. 둘 다 오프라인에서 같은 메모 수정 → 충돌 사본
+  // 4. 둘 다 오프라인에서 같은 메모 수정 → 사본 없이 한 메모로 합침 (v1.3.9)
   await A.ctx.setOffline(true); await B.ctx.setOffline(true);
   await A.p.click('.card');
   await endOfEditor(A.p); await A.p.keyboard.type(' A수정'); await save(A.p);
@@ -125,11 +125,40 @@ try {
   check('오프라인이면 상태 = offline, 기기에는 저장', st.status === 'offline' && (await A.p.evaluate(async () => (await DB.all()).some(r => r._dirty && (r.html || '').includes('A수정')))));
   await A.ctx.setOffline(false); await B.ctx.setOffline(false);
   await sync(A.p); await sync(B.p); await A.p.click('#q'); await sync(A.p);
-  check('충돌: 양쪽 다 메모 2개(원본+충돌 사본)', (await noteCount(A.p)) === 2 && (await noteCount(B.p)) === 2, `${await noteCount(A.p)}/${await noteCount(B.p)}`);
+  check('병합: 양쪽 다 메모 1개 (충돌 사본 없음)', (await noteCount(A.p)) === 1 && (await noteCount(B.p)) === 1, `${await noteCount(A.p)}/${await noteCount(B.p)}`);
   dn = driveNotes();
-  const both = dn.map(d => d.data.html).join(' ');
-  check('충돌: A수정·B수정 둘 다 보존', both.includes('A수정') && both.includes('B수정'));
-  check('충돌 사본 표시', dn.some(d => d.data.html.includes('충돌 사본')));
+  check('병합: 드라이브 버전 1개에 A수정·B수정 둘 다', dn.length === 1 && dn[0].data.html.includes('A수정') && dn[0].data.html.includes('B수정'), dn.map(d => d.data.html).join(' | '));
+  check('병합: 충돌 사본 표시 없음', !dn.some(d => d.data.html.includes('충돌 사본') || d.data.conflictOf));
+
+  // 4-1. 서로 다른 줄을 고치면 줄 단위로 깔끔히 합침 (중복 없음)
+  await A.ctx.setOffline(true); await B.ctx.setOffline(true);
+  await A.p.click('.card');
+  await endOfEditor(A.p); await A.p.keyboard.press('Enter'); await A.p.keyboard.type('맥에서 새 줄'); await save(A.p);
+  await B.p.evaluate(() => { const e = document.getElementById('editor'); e.focus(); const r = document.createRange(); r.setStart(e.firstElementChild.firstChild, 0); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r); });
+  await B.p.keyboard.type('폰앞 '); await save(B.p);
+  await A.ctx.setOffline(false); await B.ctx.setOffline(false);
+  await sync(A.p); await sync(B.p); await A.p.click('#q'); await sync(A.p);
+  const tA = await A.p.textContent('#editor'), tB = await B.p.textContent('#editor');
+  const cnt = (t, w) => t.split(w).length - 1;
+  check('다른 줄 병합: 두 기기 화면이 같고 두 수정 다 한 번씩', tA === tB && cnt(tA, '맥에서 새 줄') === 1 && cnt(tA, '폰앞') === 1 && cnt(tA, '우유 사기') === 1, `${tA} / ${tB}`);
+  check('다른 줄 병합: 메모 1개', (await noteCount(A.p)) === 1 && driveNotes().length === 1);
+
+  // 4-2. 커서가 메모 안에 있을 때 다른 기기 수정이 오면 화면에 바로 반영 → 이어 써도 덮어쓰지 않음
+  await endOfEditor(A.p);
+  await endOfEditor(B.p); await B.p.keyboard.type(' 폰추가'); await save(B.p); await sync(B.p);
+  await sync(A.p); await A.p.waitForTimeout(50);
+  check('편집 중 수신: 커서 있는 맥 화면에 폰 수정이 바로 보임', (await A.p.textContent('#editor')).includes('폰추가'));
+  await A.p.keyboard.type(' 맥추가'); await save(A.p); await sync(A.p); await sync(B.p);
+  dn = driveNotes();
+  check('편집 중 수신: 이어 쓴 뒤에도 폰추가·맥추가 둘 다 남음', dn.length === 1 && dn[0].data.html.includes('폰추가') && dn[0].data.html.includes('맥추가'), dn.map(d => d.data.html).join(' | '));
+
+  // 4-3. 타이핑 저장 직전(0.35초 안)에 다른 기기 수정이 들어와도 합쳐짐
+  await endOfEditor(B.p); await B.p.keyboard.type(' 폰3'); await save(B.p); await sync(B.p);
+  await endOfEditor(A.p); await A.p.keyboard.type(' 맥3'); await sync(A.p); await save(A.p); await sync(A.p); await sync(B.p);
+  dn = driveNotes();
+  check('저장 직전 수신: 폰3·맥3 둘 다 남음', dn.length === 1 && dn[0].data.html.includes('폰3') && dn[0].data.html.includes('맥3'), dn.map(d => d.data.html).join(' | '));
+  check('저장 직전 수신: 폰 화면에도 맥3', (await B.p.evaluate(() => [...App._test.recs().values()].find(r => r.kind === 'note' && !r.trashedAt)?.html || '')).includes('맥3'));
+  await A.p.click('#q');
 
   // 5. 체크리스트 (맥) — 체크하면 아래로
   await A.p.click('#btnNew');
@@ -211,7 +240,8 @@ try {
   await B.p.goBack();
 
   // 11. 삭제 → 폰 휴지통
-  await A.p.click('.card:has-text("충돌")');
+  await A.p.click('#btnNew');
+  await A.p.keyboard.type('지울 메모'); await save(A.p);
   await A.p.click('#btnMore');
   await A.p.click('#menu >> text=삭제');
   await sync(A.p); await sync(B.p);

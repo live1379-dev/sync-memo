@@ -140,12 +140,13 @@ const Sync = (() => {
     for (const k in rec) if (k[0] !== '_') o[k] = rec[k];
     return o;
   }
-  const BANNER = '<p><b>⚠ 충돌 사본</b> — 두 기기에서 동시에 고친 내용입니다. 확인 후 지워주세요.</p>';
-  function conflictCopy(r, u) {
-    const nid = r.id + '~' + Number(u).toString(36); // 결정적 id: 두 기기가 같은 충돌을 풀어도 사본은 하나
-    return { ...strip(r), key: 'note-' + nid, id: nid, pinned: false, conflictOf: r.id, title: (r.title || '메모') + ' (충돌 사본)',
-      text: (r.text || '') + '\n⚠ 충돌 사본', html: (r.html || '') + BANNER, updatedAt: Date.now(), _dirty: true, _base: 0 };
+  // 병합용 공통 원본 기록: 이 기기가 지나온 버전들의 내용(_base/_baseHtml + 최근 2개 _hist). 기기 안에만 둔다.
+  function rebase(old, u, html) {
+    const prev = old && old._base !== u ? [[old._base || 0, old._baseHtml], ...(old._hist || [])] : (old?._hist || []);
+    return { _base: u, _baseHtml: html, _hist: prev.filter(([v, h]) => v && h != null && h.length < 3e5).slice(0, 2) };
   }
+  // 버전 v 의 내용 (내가 지나온 버전일 때만, 아니면 undefined)
+  const htmlAt = (rec, v) => !rec || !v ? undefined : v === rec._base ? rec._baseHtml ?? undefined : (rec._hist || []).find(([u]) => u === v)?.[1];
 
   // 한 번 동기화: 1) 원격의 새 버전 받기(갈라졌으면 사본) 2) 이 기기 변경 올리기 3) 반영 끝난 옛 버전 지우기
   async function runOnce() {
@@ -178,20 +179,33 @@ const Sync = (() => {
       let win = cands[cands.length - 1];
       const sig = r => { const o = strip(r); delete o.updatedAt; return JSON.stringify(o); };
       if (win.local && !now._dirty && cands.every(c => sig(c.rec) === sig(now))) win = cands.filter(c => !c.local).sort((a, b) => a.u - b.u).pop(); // 내용이 같으면 다시 올리지 않는다
-      if (key.startsWith('note-')) {
+      const maxU = Math.max(...heads.map(h => h.u));
+      // 다음 병합의 공통 원본 = 이 기기가 이어 고칠 버전(maxU)의 내용
+      const hm = cands.find(c => !c.local && c.u === maxU);
+      const baseAt = hm ? hm.rec.html : (now && maxU === base ? now._baseHtml : undefined);
+      // 메모를 두 기기가 따로 고쳤으면 사본을 만들지 않고 한 메모로 합친다 (오너 2026-11-15 "사본이 계속 생기는게 말이 되나")
+      let merged = null;
+      if (key.startsWith('note-') && !win.rec.purged && !win.rec.locked) {
+        // 공통 원본 = 두 버전이 갈라진 버전의 내용. 내 기기가 지나온 버전이면 알고, 모르면 null(→ 양쪽 다 남김)
+        const pOf = c => heads.find(h => h.id === c.id)?.p;
+        const anc = (x, y) => x.local ? htmlAt(now, pOf(y)) : y.local ? htmlAt(now, pOf(x)) : pOf(x) === pOf(y) ? htmlAt(now, pOf(x)) : undefined;
+        let html = win.rec.html || '', edited = win.rec.editedAt || 0;
         for (const c of cands) {
-          if (c === win) continue;
-          const r = c.rec, w = win.rec;
-          if (r.purged || w.purged || r.locked || w.locked || (r.html || '') === (w.html || '')) continue; // 같은 내용·잠금·삭제는 최신 것만
-          const cp = conflictCopy(r, c.u);
-          if (!(await DB.get(cp.key))) await DB.put(cp);
+          const r = c.rec;
+          if (c === win || r.purged || r.locked || (r.html || '') === html) continue;
+          html = Merge.html(anc(win, c) ?? null, html, r.html || '');
+          edited = Math.max(edited, r.editedAt || 0);
+        }
+        if (html !== (win.rec.html || '')) {
+          merged = { ...strip(win.rec), key, html, editedAt: edited || undefined };
+          App.derive?.(merged);
         }
       }
-      const maxU = Math.max(...heads.map(h => h.u));
-      if (win.local) await DB.put({ ...now, updatedAt: Math.max(now.updatedAt, maxU + 1), _base: maxU, _dirty: true }); // 내 것이 최신 → 새 버전이 모든 끝 버전을 대체
+      if (merged) await DB.put({ ...merged, updatedAt: Math.max(Date.now(), maxU + 1, (now?.updatedAt || 0) + 1), ...rebase(now, maxU, baseAt), _dirty: true });
+      else if (win.local) await DB.put({ ...now, updatedAt: Math.max(now.updatedAt, maxU + 1), ...rebase(now, maxU, baseAt), _dirty: true }); // 내 것이 최신 → 새 버전이 모든 끝 버전을 대체
       else {
-        await DB.put({ ...strip(win.rec), key, _base: win.u, _dirty: false });
-        heads.filter(h => h.id !== win.id).forEach(h => garbage.add(h.id)); // 진 쪽 내용은 사본으로 보존됨
+        await DB.put({ ...strip(win.rec), key, ...rebase(now, win.u, win.rec.html), _dirty: false });
+        heads.filter(h => h.id !== win.id).forEach(h => garbage.add(h.id)); // 진 쪽은 같은 내용·잠금·삭제뿐
       }
       changed = true;
     }
@@ -199,7 +213,7 @@ const Sync = (() => {
       await upload(rec);
       (byKey.get(rec.key) || []).filter(v => v.u <= (rec._base || 0)).forEach(v => garbage.add(v.id));
       const cur = await DB.get(rec.key);
-      const done = { ...cur, _base: Math.max(cur._base || 0, rec.updatedAt) }; // 올리는 중 또 고쳤으면 dirty 유지, 다음 버전은 이걸 이어받음
+      const done = rec.updatedAt >= (cur._base || 0) ? { ...cur, ...rebase(cur, rec.updatedAt, rec.html) } : { ...cur }; // 올리는 중 또 고쳤으면 dirty 유지, 다음 버전은 이걸 이어받음
       if (cur.updatedAt === rec.updatedAt) done._dirty = false;
       await DB.put(done);
     }
@@ -233,7 +247,7 @@ const Sync = (() => {
     addEventListener('online', () => run());
     addEventListener('offline', () => emit({ status: 'offline' }));
     document.addEventListener('visibilitychange', () => { if (!document.hidden) run(); });
-    setInterval(() => { if (!document.hidden) run(); }, 30000);
+    setInterval(() => { if (!document.hidden) run(); }, 10000); // 다른 기기 수정을 빨리 받아 엇갈림 자체를 줄인다
     run();
   }
 
