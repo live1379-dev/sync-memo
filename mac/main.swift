@@ -4,11 +4,14 @@ import Cocoa
 @preconcurrency import WebKit
 import Network
 import CryptoKit
+import UniformTypeIdentifiers
 
 let WWW = Bundle.main.resourceURL!.appendingPathComponent("www")
 let SCHEME = "syncmemo"
 let START = URL(string: "\(SCHEME)://app/index.html")!
-let SCOPE = "https://www.googleapis.com/auth/drive.appdata"
+// 동기화는 숨김 폴더(appdata), 첨부는 보이는 '싱크 메모 첨부' 폴더(drive.file — 앱이 만든 파일만). v1.4.14 전 로그인은 appdata 만 있어 첫 첨부 때 한 번 다시 허용
+let SCOPE = "https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.file"
+let ATTACH_FOLDER = "싱크 메모 첨부"
 
 // ───────── 내장 화면 파일 제공 (syncmemo://app/...) ─────────
 final class Files: NSObject, WKURLSchemeHandler {
@@ -187,6 +190,30 @@ final class DragStrip: NSView {
 final class Web: WKWebView {
     var lastDown: NSEvent?
     override func mouseDown(with e: NSEvent) { lastDown = e; super.mouseDown(with: e) }
+    // 본문 우클릭(맥 기본 메뉴: 복사·붙여넣기…) 맨 밑에 회의록·콘티를 덧붙인다 (오너 2026-11-19)
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        menu.addItem(.separator())
+        for (t, k) in [("회의록 만들기 (Claude)", "회의록"), ("콘티 준비하기 (Claude)", "콘티")] {
+            let i = NSMenuItem(title: t, action: #selector(claudeItem(_:)), keyEquivalent: "")
+            i.target = self; i.representedObject = k; menu.addItem(i)
+        }
+    }
+    @objc func claudeItem(_ s: NSMenuItem) { if let k = s.representedObject as? String { evaluateJavaScript("App.claudeCur('\(k)')", completionHandler: nil) } }
+    // 파일 끌어 놓기: 그림만이면 화면(JS)이 본문에 넣고, 그 밖의 파일은 드라이브에 올려 📎 칩으로 (오너 2026-11-19)
+    static let imageExt: Set<String> = ["png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "tif", "bmp"]
+    func droppedFiles(_ s: NSDraggingInfo) -> [URL] {
+        (s.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+    func attachDrop(_ s: NSDraggingInfo) -> Bool { let u = droppedFiles(s); return !u.isEmpty && !u.allSatisfy { Web.imageExt.contains($0.pathExtension.lowercased()) } }
+    override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation { let o = super.draggingEntered(s); return attachDrop(s) ? .copy : o }
+    override func draggingUpdated(_ s: NSDraggingInfo) -> NSDragOperation { let o = super.draggingUpdated(s); return attachDrop(s) ? .copy : o }
+    override func performDragOperation(_ s: NSDraggingInfo) -> Bool {
+        guard attachDrop(s), let d = NSApp.delegate as? AppDelegate else { return super.performDragOperation(s) }
+        d.pendingFiles += droppedFiles(s)
+        evaluateJavaScript("App.dropFiles()", completionHandler: nil)
+        return true
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
@@ -194,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
     var cfg: WKWebViewConfiguration!
     var noteWindows: [String: NSWindow] = [:]
     var web: WKWebView!
+    var pendingFiles: [URL] = [] // 끌어 놓거나 📎 로 고른, 아직 드라이브에 안 올린 파일
     let auth = Auth()
     var selftest: String?
 
@@ -422,7 +450,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
                 p.arguments = ["kickstart", "gui/\(getuid())/com.caleb.syncmemo-claude"]; try? p.run() }
                 reply(wv, id, true, nil)
             } catch { reply(wv, id, false, error.localizedDescription) }
+        case "files.pick": // 📎 버튼
+            let p = NSOpenPanel(); p.allowsMultipleSelection = true; p.canChooseDirectories = false
+            p.beginSheetModal(for: wv.window ?? window) { r in
+                if r == .OK { self.pendingFiles += p.urls }
+                self.reply(wv, id, true, r == .OK ? p.urls.map { ["name": $0.lastPathComponent] } : [])
+            }
+        case "files.clear": pendingFiles = []; reply(wv, id, true, nil)
+        case "files.upload":
+            let list = pendingFiles
+            if list.isEmpty { return reply(wv, id, true, []) }
+            if selftest != nil { pendingFiles = []; return reply(wv, id, true, list.map { ["id": "selftest", "name": $0.lastPathComponent, "size": fileSize($0)] }) }
+            Task { @MainActor in
+                do {
+                    let out = try await self.uploadAll(list, wv, cid, sec)
+                    self.pendingFiles.removeAll { list.contains($0) }
+                    self.reply(wv, id, true, out)
+                } catch { self.reply(wv, id, false, (error as? AuthError)?.msg ?? error.localizedDescription) }
+            }
         default: reply(wv, id, false, "알 수 없는 요청 \(method)")
+        }
+    }
+
+    // ───────── 첨부 → 드라이브 '싱크 메모 첨부' (안드로이드와 같은 방식: 이어올리기, 파일을 메모리에 다 올리지 않음) ─────────
+    func fileSize(_ u: URL) -> Int64 { ((try? FileManager.default.attributesOfItem(atPath: u.path))?[.size] as? NSNumber)?.int64Value ?? 0 }
+    struct ScopeError: Error {}
+    func driveToken(_ cid: String, _ sec: String, force: Bool = false) async throws -> String {
+        try await withCheckedThrowingContinuation { c in auth.token(clientId: cid, secret: sec, force: force) { r in c.resume(with: r.mapError { $0 as Error }) } }
+    }
+    func driveLogin(_ cid: String, _ sec: String) async throws {
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in auth.login(clientId: cid, secret: sec) { r in c.resume(with: r.mapError { $0 as Error }) } }
+    }
+    func driveReq(_ r: URLRequest, file: URL? = nil) async throws -> (Data, HTTPURLResponse) {
+        let (d, resp): (Data, URLResponse)
+        if let f = file { (d, resp) = try await URLSession.shared.upload(for: r, fromFile: f) } else { (d, resp) = try await URLSession.shared.data(for: r) }
+        let h = resp as! HTTPURLResponse
+        if h.statusCode == 403 || h.statusCode == 401 { throw ScopeError() }
+        if !(200..<300).contains(h.statusCode) { throw AuthError(msg: "드라이브 오류 \(h.statusCode)") }
+        return (d, h)
+    }
+    func req(_ url: String, _ t: String, _ method: String = "GET", json: [String: Any]? = nil) -> URLRequest {
+        var r = URLRequest(url: URL(string: url)!); r.httpMethod = method; r.timeoutInterval = 600
+        r.setValue("Bearer " + t, forHTTPHeaderField: "Authorization")
+        if let j = json { r.setValue("application/json; charset=UTF-8", forHTTPHeaderField: "Content-Type"); r.httpBody = try? JSONSerialization.data(withJSONObject: j) }
+        return r
+    }
+    /// 이름으로 폴더를 찾고(앱이 만든 것만 보인다) 없으면 만든다
+    func attachFolder(_ t: String) async throws -> String {
+        let key = "folder:" + ATTACH_FOLDER
+        if let id = UserDefaults.standard.string(forKey: key),
+           let (d, _) = try? await driveReq(req("https://www.googleapis.com/drive/v3/files/\(id)?fields=trashed", t)),
+           (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["trashed"] as? Bool == false { return id }
+        var c = URLComponents(string: "https://www.googleapis.com/drive/v3/files")!
+        c.queryItems = [.init(name: "fields", value: "files(id)"), .init(name: "q", value: "name='\(ATTACH_FOLDER)' and mimeType='application/vnd.google-apps.folder' and trashed=false")]
+        let (d, _) = try await driveReq(req(c.url!.absoluteString, t))
+        var id = ((try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["files"] as? [[String: Any]])?.first?["id"] as? String
+        if id == nil {
+            let (d2, _) = try await driveReq(req("https://www.googleapis.com/drive/v3/files?fields=id", t, "POST", json: ["name": ATTACH_FOLDER, "mimeType": "application/vnd.google-apps.folder"]))
+            id = (try? JSONSerialization.jsonObject(with: d2) as? [String: Any])?["id"] as? String
+        }
+        guard let f = id else { throw AuthError(msg: "첨부 폴더를 만들지 못했어요") }
+        UserDefaults.standard.set(f, forKey: key)
+        return f
+    }
+    func uploadOne(_ u: URL, _ t: String, _ folder: String) async throws -> [String: Any] {
+        let mime = UTType(filenameExtension: u.pathExtension)?.preferredMIMEType ?? "application/octet-stream", size = fileSize(u)
+        var r = req("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable", t, "POST", json: ["name": u.lastPathComponent, "parents": [folder]])
+        r.setValue(mime, forHTTPHeaderField: "X-Upload-Content-Type"); r.setValue(String(size), forHTTPHeaderField: "X-Upload-Content-Length")
+        let (_, h) = try await driveReq(r)
+        guard let loc = h.value(forHTTPHeaderField: "Location") else { throw AuthError(msg: "올릴 주소를 받지 못했어요") }
+        var p = req(loc, t, "PUT"); p.setValue(mime, forHTTPHeaderField: "Content-Type")
+        let (d, _) = try await driveReq(p, file: u)
+        guard let fid = (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["id"] as? String else { throw AuthError(msg: "올린 파일 id 없음") }
+        return ["id": fid, "name": u.lastPathComponent, "size": size, "mime": mime]
+    }
+    func uploadAll(_ list: [URL], _ wv: WKWebView, _ cid: String, _ sec: String) async throws -> [[String: Any]] {
+        func run(_ force: Bool) async throws -> [[String: Any]] {
+            let t = try await driveToken(cid, sec, force: force), folder = try await attachFolder(t)
+            var out: [[String: Any]] = []
+            for (i, u) in list.enumerated() {
+                _ = try? await wv.evaluateJavaScript("App.progress('드라이브에 올리는 중… \(i + 1)/\(list.count)')")
+                out.append(try await uploadOne(u, t, folder))
+            }
+            return out
+        }
+        do { return try await run(false) } catch is ScopeError {} // 토큰 만료일 수도 → 새 토큰으로 한 번 더
+        do { return try await run(true) } catch is ScopeError {
+            // v1.4.14 전 로그인은 첨부 권한(drive.file)이 없다 → 한 번 다시 허용받고 이어서 올린다
+            _ = try? await wv.evaluateJavaScript("App.progress('브라우저에서 구글 ‘파일 첨부’ 권한을 허용해 주세요…')")
+            try await driveLogin(cid, sec)
+            do { return try await run(true) } catch is ScopeError { throw AuthError(msg: "드라이브 첨부 권한이 없어요") }
         }
     }
 
@@ -541,6 +658,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
             let hit = box.hitTest(NSPoint(x: box.bounds.midX, y: box.bounds.height - 10))
             text = String(text.trimmingCharacters(in: .whitespacesAndNewlines).dropLast()) + ",\"dragStrip\":\(hit is DragStrip),\"belowIsWeb\":\(box.hitTest(NSPoint(x: box.bounds.midX, y: box.bounds.height - 60)) is WKWebView)}"
             try? text.write(toFile: out, atomically: true, encoding: .utf8)
+            // 본문 우클릭 메뉴: 회의록·콘티가 붙는지 → 콘티를 누르면 확인창이 뜨는지
+            if let w = self.web as? Web, let ev = NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: self.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                let m = NSMenu(); m.addItem(withTitle: "복사", action: nil, keyEquivalent: "")
+                w.willOpenMenu(m, with: ev)
+                let titles = m.items.map { $0.title }.filter { !$0.isEmpty }
+                if let it = m.items.last { w.claudeItem(it) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    w.evaluateJavaScript("(document.querySelector('.modal h3, #modal h3, h3')||{}).textContent||''") { r, _ in
+                        let j = try? JSONSerialization.data(withJSONObject: ["menu": titles, "dialog": (r as? String) ?? ""])
+                        try? j?.write(to: URL(fileURLWithPath: out + ".menu"))
+                    }
+                }
+            }
             // 더블클릭 새 창
             if let d = text.data(using: .utf8), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], let id = j["noteId"] as? String {
                 self.openNoteWindow(id, "검사")
@@ -550,12 +680,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
                     v?.evaluateJavaScript("JSON.stringify({single: document.getElementById('app').classList.contains('single'), len: document.getElementById('editor').innerText.length, listShown: getComputedStyle(document.getElementById('list')).display !== 'none'})") { r, _ in
                         try? ((r as? String) ?? "null").write(toFile: out + ".win", atomically: true, encoding: .utf8)
                         w?.close()
-                        self.finishSelftest(out)
+                        // 새 창 검사가 끝난 뒤에 (동시에 돌면 열린 메모가 바뀌는 경합)
+                        if let mw = self.web as? Web { self.selftestAttach(mw, out) { self.finishSelftest(out) } } else { self.finishSelftest(out) }
                     }
                 }
                 return
             }
             self.finishSelftest(out)
+        }
+    }
+    /// 자가검사: 클립보드 그림 붙여넣기 → 본문 <img>, 그림 아닌 파일 끌어 놓기 → 📎 칩. 오너 클립보드는 검사 뒤 되돌린다
+    func selftestAttach(_ w: Web, _ out: String, _ done: @escaping () -> Void) {
+        w.evaluateJavaScript("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); document.querySelector('#modal [data-x], .modal [data-x]')?.click(); const e=document.getElementById('editor'); e.addEventListener('paste', ev => { window.__p = [...ev.clipboardData.types].join(',') + ' files=' + ev.clipboardData.files.length + ' items=' + [...ev.clipboardData.items].map(i => i.kind + ':' + i.type).join(','); }, { capture: true }); e.focus(); const s=getSelection(); s.selectAllChildren(e); s.collapseToEnd(); e.querySelectorAll('img').length") { before, _ in
+            let pb = NSPasteboard.general
+            let saved = (pb.pasteboardItems ?? []).map { it -> NSPasteboardItem in let n = NSPasteboardItem(); for t in it.types { if let d = it.data(forType: t) { n.setData(d, forType: t) } }; return n }
+            let img = NSImage(size: NSSize(width: 40, height: 40)); img.lockFocus(); NSColor.systemRed.setFill(); NSRect(x: 0, y: 0, width: 40, height: 40).fill(); img.unlockFocus()
+            let png = NSBitmapImageRep(data: img.tiffRepresentation!)!.representation(using: .png, properties: [:])!
+            pb.clearContents(); pb.setData(png, forType: .png)
+            self.window.makeFirstResponder(w)
+            w.perform(NSSelectorFromString("paste:"), with: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                pb.clearContents(); if !saved.isEmpty { pb.writeObjects(saved) }
+                let tmp = URL(fileURLWithPath: out + ".녹음.m4a"); try? Data(repeating: 1, count: 2048).write(to: tmp)
+                self.pendingFiles = [tmp]
+                w.evaluateJavaScript("App.dropFiles(); 0") { _, _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        w.evaluateJavaScript("JSON.stringify({paste: window.__p || '', img: document.querySelectorAll('#editor img').length, chips: [...document.querySelectorAll('#editor a.file')].map(a => a.textContent), toast: document.getElementById('toast').textContent})") { r, _ in
+                            let s = (r as? String) ?? "{}"
+                            try? (String(s.dropLast()) + ",\"imgBefore\":\(before ?? -1),\"clipRestored\":\(saved.isEmpty || pb.pasteboardItems?.count == saved.count)}").write(toFile: out + ".attach", atomically: true, encoding: .utf8)
+                            try? FileManager.default.removeItem(at: tmp)
+                            done()
+                        }
+                    }
+                }
+            }
         }
     }
     func finishSelftest(_ out: String) {

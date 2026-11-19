@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.14';
+  const VERSION = '1.4.15';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1531,7 +1531,7 @@ const App = (() => {
     // 맥: 편집 화면 위에 회의록·콘티 버튼을 늘 보이게 (오너 2026-11-19 — 우클릭만으론 못 찾음)
     for (const [sel, kind] of [['#btnMinutes', '회의록'], ['#btnConti', '콘티']]) {
       $(sel).hidden = Native.platform !== 'mac';
-      $(sel).onclick = () => { const n = cur(); if (!n) return; if (n.locked && !unlocked.has(n.id)) return toast('잠긴 메모는 먼저 열어 주세요'); askClaude(n, kind); };
+      $(sel).onclick = () => claudeCur(kind);
     }
     $('#btnMore').onclick = e => moreMenu(e.currentTarget);
     $('#btnUnlock').onclick = () => cur() && unlockNote(cur());
@@ -1816,7 +1816,7 @@ const App = (() => {
   async function uploadInto(n) {
     progress('드라이브에 올리는 중…');
     let files;
-    try { files = await Native.call('files.upload'); } catch (e) { return toast('올리지 못했어요 — ' + e.message, 6000); }
+    try { files = await Native.call('files.upload', await Sync.cfg()); } catch (e) { return toast('올리지 못했어요 — ' + e.message, 6000); }
     if (!files?.length) { $('#toast').hidden = true; return; }
     const html = files.map(fileChip).join('');
     if (n.id === curId && !n.trashedAt) { editor.insertAdjacentHTML('beforeend', html + '<p><br></p>'); afterEdit(); await saveNow(); }
@@ -1825,7 +1825,7 @@ const App = (() => {
   }
   async function attachFiles() {
     const n = cur(); if (!n) return;
-    if (!Native.available || Native.platform !== 'android') return toast('파일 첨부는 폰 앱에서 할 수 있어요');
+    if (!Native.available) return toast('파일 첨부는 폰·맥 앱에서 할 수 있어요');
     await saveNow();
     let picked; try { picked = await Native.call('files.pick'); } catch (e) { return toast(e.message); }
     if (picked?.length) uploadInto(n);
@@ -1854,6 +1854,19 @@ const App = (() => {
     회의록: { what: '회의록을 만들어', back: '‘회의록’ 폴더에 메모로 들어와요' },
     콘티: { what: '콘티를 준비해(링크·악보 PDF·스테이지)', back: '링크는 ‘콘티’ 메모로, 악보 PDF 는 맥 콘티 폴더에 생겨요' },
   };
+  // 맥: 그림 아닌 파일을 메모에 끌어 놓으면 네이티브가 받아 두고 여기를 부른다
+  async function dropFiles() {
+    const n = cur();
+    if (!n || n.trashedAt) { Native.call('files.clear').catch(() => {}); return toast('메모를 먼저 열고 놓아 주세요'); }
+    await saveNow(); uploadInto(n);
+  }
+  // 지금 열린 메모로 — 편집 화면 버튼과 맥 본문 우클릭 메뉴가 같이 쓴다
+  function claudeCur(kind) {
+    const n = cur();
+    if (!n) return toast('메모를 먼저 열어 주세요');
+    if (n.locked && !unlocked.has(n.id)) return toast('잠긴 메모는 먼저 열어 주세요');
+    askClaude(n, kind);
+  }
   async function askClaude(n, kind) {
     if (n.id === curId) await saveNow();
     const k = CLAUDE_KINDS[kind], files = chipFiles(n.html);
@@ -1904,6 +1917,6 @@ const App = (() => {
     if (Native.platform === 'mac') { pullInbox(); setInterval(pullInbox, 15000); addEventListener('focus', pullInbox); }
   }
 
-  return { init, uid, onRemoteChange, launch, progress, flush: () => saveNow(), setSysDark, toggleSide, fmt, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, plainText: h => { const d = document.createElement('div'); d.innerHTML = h; return plainText(d); }, sanitize, chipFiles, fileChip, importData, saveNow, lockAll } };
+  return { init, uid, onRemoteChange, launch, progress, flush: () => saveNow(), setSysDark, toggleSide, fmt, claudeCur, dropFiles, newNote: () => newNote(), openSettings: () => settings(), focusSearch: () => $('#q').focus(), _test: { recs: () => recs, htmlToMd, plainText: h => { const d = document.createElement('div'); d.innerHTML = h; return plainText(d); }, sanitize, chipFiles, fileChip, importData, saveNow, lockAll } };
 })();
 App.init();
