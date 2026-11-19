@@ -526,6 +526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKSc
         const card = document.querySelector('.card.on'); const cr = card.getBoundingClientRect();
         card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: cr.left + 20, clientY: cr.top + 10 }));
         await new Promise(res => setTimeout(res, 100));
+        r.editBtns = ['btnMinutes', 'btnConti'].map(i => { const b = document.getElementById(i); return b.textContent + ':' + (b.offsetWidth > 0); });
         r.menu = [...document.querySelectorAll('.mi')].map(b => b.textContent).filter(t => t.includes('Claude'));
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         r.claudeReq = await Native.call('claude.request', { name: '검사 콘티.json', json: JSON.stringify({ v: 1, kind: '콘티', title: '검사' }) }).then(() => true, e => String(e));

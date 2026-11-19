@@ -1,6 +1,6 @@
 // 싱크 메모 — 애플 메모 + 삼성 노트의 좋은 점을 합친 오프라인 우선 메모 앱
 const App = (() => {
-  const VERSION = '1.4.11';
+  const VERSION = '1.4.14';
   const $ = s => document.querySelector(s);
   const app = $('#app'), editor = $('#editor'), menuEl = $('#menu'), modalEl = $('#modal'), sheet = $('#sheet');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1528,6 +1528,11 @@ const App = (() => {
     });
     $('#btnPin').onclick = () => cur() && togglePin(cur());
     $('#btnShare').onclick = share;
+    // 맥: 편집 화면 위에 회의록·콘티 버튼을 늘 보이게 (오너 2026-11-19 — 우클릭만으론 못 찾음)
+    for (const [sel, kind] of [['#btnMinutes', '회의록'], ['#btnConti', '콘티']]) {
+      $(sel).hidden = Native.platform !== 'mac';
+      $(sel).onclick = () => { const n = cur(); if (!n) return; if (n.locked && !unlocked.has(n.id)) return toast('잠긴 메모는 먼저 열어 주세요'); askClaude(n, kind); };
+    }
     $('#btnMore').onclick = e => moreMenu(e.currentTarget);
     $('#btnUnlock').onclick = () => cur() && unlockNote(cur());
 

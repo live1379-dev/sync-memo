@@ -79,6 +79,7 @@ nav a svg { width: 18px; height: 18px; color: var(--accent); }
 #ptr.ready svg { color: var(--accent, #e0a800); }
 
 .icon { display: inline-flex; align-items: center; justify-content: center; gap: 2px; min-width: 34px; height: 34px; border-radius: 8px; color: var(--ink2); }
+.claude-btn { padding: 0 9px; font-size: 13px; font-weight: 600; color: var(--accent); }
 .icon:hover { background: var(--hover); color: var(--ink); }
 .icon.on { color: var(--accent); }
 .link { color: var(--accent); }
